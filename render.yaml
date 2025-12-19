@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: autocfd
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: LUMINARY_API_KEY
+        sync: false
+      - key: LUMINARY_PROJECT_NAME
+        value: AutoCFD Solar Car
+      - key: DEFAULT_FARFIELD_SPEED
+        value: "24.59"
+      - key: GOOGLE_SHEETS_CREDENTIALS
+        sync: false
+      - key: GOOGLE_SHEETS_SPREADSHEET_ID
+        sync: false
+    healthCheckPath: /

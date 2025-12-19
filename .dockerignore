@@ -1,0 +1,36 @@
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+uploads/*
+!uploads/.gitkeep
+dumps/
+scripts/
+
+# Documentation and tests
+*.md
+*.html
+*.json
+!data/*.json
+
+# Git
+.git
+.gitignore

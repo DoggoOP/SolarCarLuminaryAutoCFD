@@ -1,0 +1,8 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+Jinja2==3.1.4
+pydantic-settings==2.5.2
+luminarycloud==0.22.1
+gspread==6.1.4
+google-auth==2.36.0

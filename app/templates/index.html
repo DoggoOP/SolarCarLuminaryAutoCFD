@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AutoCFD Runner</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 2rem;
+        background: #f8f8fb;
+        color: #1f2933;
+      }
+      h1 {
+        margin-bottom: 0.25rem;
+      }
+      form {
+        background: #fff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        margin-bottom: 2rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+      }
+      label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        display: block;
+        margin-bottom: 0.35rem;
+      }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        padding: 0.45rem;
+        border: 1px solid #c5c9d2;
+        border-radius: 0.35rem;
+      }
+      .full {
+        grid-column: 1 / -1;
+      }
+      button {
+        padding: 0.65rem 1.25rem;
+        border: none;
+        border-radius: 0.35rem;
+        background: #4338ca;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .jobs {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .job {
+        background: #fff;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+      }
+      .job pre {
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 0.75rem;
+        border-radius: 0.35rem;
+        overflow-x: auto;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 0.25rem;
+        background: #e0e7ff;
+        color: #312e81;
+        margin-left: 0.5rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Solar Car AutoCFD</h1>
+    <p>Upload a CAD file and the pipeline will push it through Luminary Cloud automatically.</p>
+
+    <form id="upload-form" enctype="multipart/form-data">
+      <div class="full">
+        <label for="cad_file">CAD File</label>
+        <input id="cad_file" name="cad_file" type="file" required />
+      </div>
+      <div>
+        <label for="cad_label">Design label</label>
+        <input id="cad_label" name="cad_label" placeholder="SolarCar_v1" required />
+      </div>
+      <div>
+        <label for="project_name">Project name</label>
+        <input id="project_name" name="project_name" value="{{ default_project }}" placeholder="AutoCFD Solar Car" />
+      </div>
+      <div>
+        <label for="farfield_speed">Wind speed (m/s)</label>
+        <input id="farfield_speed" name="farfield_speed" type="number" step="0.01" value="{{ default_speed }}" />
+      </div>
+      <div>
+        <label for="wind_direction">Wind direction (x,y,z)</label>
+        <input id="wind_direction" name="wind_direction" value="-1,0,0" />
+      </div>
+      <div>
+        <label for="farfield_multiplier">Farfield size multiplier</label>
+        <input
+          id="farfield_multiplier"
+          name="farfield_multiplier"
+          type="number"
+          step="0.5"
+          value="25"
+        />
+        <small>Radius = multiplier × max car dimension.</small>
+      </div>
+      <div>
+        <label for="farfield_padding">Farfield padding (m, optional)</label>
+        <input id="farfield_padding" name="farfield_padding" placeholder="0.0" />
+	<small>Wheels: 0, No wheels: ride height.</small>
+      </div>
+      <div>
+        <label for="farfield_center">Farfield center (x,y,z, optional)</label>
+        <input id="farfield_center" name="farfield_center" placeholder="auto" />
+      </div>
+      <div>
+        <label for="mesh_min_size">Mesh min size (m)</label>
+        <input id="mesh_min_size" name="mesh_min_size" type="number" step="0.0001" value="0.002" />
+      </div>
+      <div>
+        <label for="mesh_max_size">Mesh max size (m)</label>
+        <input id="mesh_max_size" name="mesh_max_size" type="number" step="0.0001" value="0.05" />
+      </div>
+      <div class="full">
+        <label for="body_surfaces">Body surface names (comma separated, optional)</label>
+        <input id="body_surfaces" name="body_surfaces" placeholder="0/bound/car_body" />
+      </div>
+      <div class="full">
+        <label for="floor_surfaces">Floor surface names (comma separated, optional)</label>
+        <input id="floor_surfaces" name="floor_surfaces" placeholder="0/bound/floor" />
+      </div>
+      <div class="full">
+        <label for="farfield_surfaces">Farfield surface names (comma separated, optional)</label>
+        <input id="farfield_surfaces" name="farfield_surfaces" placeholder="0/bound/farfield" />
+      </div>
+      <div class="full">
+        <button type="submit">Launch Simulation</button>
+      </div>
+    </form>
+
+    <div id="result"></div>
+
+    <section>
+      <h2>Submitted Jobs</h2>
+      <div class="jobs" id="jobs">
+        {% for job in jobs %}
+        <div class="job">
+          <h3>
+            {{ job.title }}
+            <span class="badge">{{ job.status }}</span>
+          </h3>
+          {% if job.result %}
+          <p>Simulation ID: {{ job.result.simulation_id }}</p>
+          {% endif %}
+          {% if job.error %}
+          <p style="color: #b91c1c;">{{ job.error }}</p>
+          {% endif %}
+          <pre>
+{% for entry in job.log -%}
+{{ entry.timestamp }} — {{ entry.message }}
+{% endfor -%}
+          </pre>
+        </div>
+        {% else %}
+        <p>No jobs yet.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <script>
+      const form = document.getElementById("upload-form");
+      const resultBox = document.getElementById("result");
+      const jobsBox = document.getElementById("jobs");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        resultBox.textContent = "Submitting …";
+        const response = await fetch("/run", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json();
+        if (response.ok) {
+          resultBox.textContent = `Submitted. Job id: ${payload.job_id}`;
+          refreshJobs();
+        } else {
+          resultBox.textContent = payload.detail || "Submission failed";
+        }
+      });
+
+      async function refreshJobs() {
+        const response = await fetch("/jobs");
+        if (!response.ok) {
+          return;
+        }
+        const jobs = await response.json();
+        jobsBox.innerHTML = jobs
+          .map(
+            (job) => `
+            <div class="job">
+              <h3>${job.title} <span class="badge">${job.status}</span></h3>
+              ${
+                job.result
+                  ? `<p>Simulation ID: ${job.result.simulation_id}</p>`
+                  : ""
+              }
+              ${
+                job.error ? `<p style="color:#b91c1c;">${job.error}</p>` : ""
+              }
+              <pre>${
+                job.log
+                  .map((entry) => `${entry.timestamp} — ${entry.message}`)
+                  .join("\n") || "No log entries yet."
+              }</pre>
+            </div>`
+          )
+          .join("");
+      }
+
+      setInterval(refreshJobs, 10000);
+    </script>
+  </body>
+</html>
