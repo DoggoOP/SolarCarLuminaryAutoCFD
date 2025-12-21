@@ -244,7 +244,7 @@ class LuminaryCFDPipeline:
     def _client_or_create(self) -> lc.Client:
         if not self._client:
             self._client = lc.Client(api_key=self._settings.luminary_api_key)
-            lc.set_default_client(self._client)
+            # Don't set global default client - each pipeline instance should be isolated
         return self._client
 
     def _setup_stopping_conditions(
@@ -586,12 +586,12 @@ class LuminaryCFDPipeline:
         self, client: lc.Client, project_name: str, callback: StatusCallback
     ) -> lc.Project:
         callback(f"Ensuring project '{project_name}' exists …")
-        for existing in lc.list_projects():
+        for existing in client.list_projects():
             if existing.name == project_name:
                 callback(f"Re-using existing project {existing.id}.")
                 return existing
         callback("Project not found. Creating a new project …")
-        return lc.create_project(project_name, "Auto-created by the AutoCFD pipeline.")
+        return client.create_project(project_name, "Auto-created by the AutoCFD pipeline.")
 
     @staticmethod
     def _collect_surface_metadata(metadata: Any) -> Dict[str, Any]:
@@ -755,16 +755,8 @@ class LuminaryCFDPipeline:
             import csv
             from luminarycloud.enum import QuantityType, CalculationType
 
-            # Get the project if not provided
             if not project:
-                # Try to get project from client
-                for proj in lc.iterate_projects():
-                    if proj.id == simulation.project_id:
-                        project = proj
-                        break
-
-            if not project:
-                results["error"] = "Project not found"
+                results["error"] = "Project not provided"
                 return results
 
             # Get the mesh to find body surfaces

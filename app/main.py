@@ -19,8 +19,7 @@ app = FastAPI(title="Luminary AutoCFD Pipeline")
 templates = Jinja2Templates(directory="app/templates")
 settings: Settings = get_settings()
 job_store = JobStore()
-pipeline = LuminaryCFDPipeline(settings)
-executor = ThreadPoolExecutor(max_workers=2)
+executor = ThreadPoolExecutor(max_workers=5)
 _submission_lock = Lock()
 _last_submission_time = 0.0
 
@@ -164,7 +163,10 @@ async def run_case(
 
     def _run_pipeline() -> None:
         try:
-            result = pipeline.run_case(case_config, _log, check_cancelled=_check_cancelled)
+            job_store.set_status(job_id, "running")
+            # Create a new pipeline instance for this job to ensure thread safety
+            job_pipeline = LuminaryCFDPipeline(settings)
+            result = job_pipeline.run_case(case_config, _log, check_cancelled=_check_cancelled)
         except RuntimeError as exc:
             # Check if this was a cancellation
             if "cancelled by user" in str(exc).lower():
