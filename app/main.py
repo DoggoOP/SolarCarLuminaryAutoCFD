@@ -83,6 +83,16 @@ async def list_jobs() -> JSONResponse:
     return JSONResponse(job_store.list_jobs())
 
 
+@app.post("/jobs/{job_id}/cancel", response_class=JSONResponse)
+async def cancel_job(job_id: str) -> JSONResponse:
+    if job_store.cancel(job_id):
+        return JSONResponse({"status": "cancelled", "job_id": job_id})
+    job = job_store.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    raise HTTPException(status_code=400, detail=f"Cannot cancel job with status: {job['status']}")
+
+
 @app.post("/run")
 async def run_case(
     request: Request,
@@ -149,9 +159,20 @@ async def run_case(
     def _log(message: str) -> None:
         job_store.append(job_id, message)
 
+    def _check_cancelled() -> bool:
+        return job_store.is_cancelled(job_id)
+
     def _run_pipeline() -> None:
         try:
-            result = pipeline.run_case(case_config, _log)
+            result = pipeline.run_case(case_config, _log, check_cancelled=_check_cancelled)
+        except RuntimeError as exc:
+            # Check if this was a cancellation
+            if "cancelled by user" in str(exc).lower():
+                _log("Job cancelled by user")
+                job_store.set_status(job_id, "cancelled")
+            else:
+                _log(f"ERROR: {exc}")
+                job_store.set_status(job_id, "failed", error=str(exc))
         except Exception as exc:  # pragma: no cover - network/SDK failures
             _log(f"ERROR: {exc}")
             job_store.set_status(job_id, "failed", error=str(exc))

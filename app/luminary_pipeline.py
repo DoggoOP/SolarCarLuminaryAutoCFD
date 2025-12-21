@@ -21,6 +21,7 @@ from .config import Settings
 from .sheets_logger import SheetsLogger
 
 StatusCallback = Callable[[str], None]
+CancellationCheck = Callable[[], bool]
 
 
 def _set_vector(target: dict, vector: Tuple[float, float, float]) -> None:
@@ -318,11 +319,22 @@ class LuminaryCFDPipeline:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
 
-    def run_case(self, config: CaseConfig, callback: StatusCallback) -> dict:
+    def run_case(
+        self,
+        config: CaseConfig,
+        callback: StatusCallback,
+        check_cancelled: Optional[CancellationCheck] = None,
+    ) -> dict:
+        def _check_cancellation() -> None:
+            """Check if job has been cancelled and raise exception if so."""
+            if check_cancelled and check_cancelled():
+                raise RuntimeError("Job cancelled by user")
+
         client = self._client_or_create()
         case_name = f"{config.cad_label.strip()}-{datetime.utcnow():%Y%m%d-%H%M%S}"
 
         project = self._ensure_project(client, config.project_name, callback)
+        _check_cancellation()
 
         callback("Uploading CAD and creating geometry …")
         geometry = project.create_geometry(
@@ -331,6 +343,7 @@ class LuminaryCFDPipeline:
             wait=True,
         )
         callback(f"Geometry created with id={geometry.id}. Computing bounding box …")
+        _check_cancellation()
         bbox_min, bbox_max = self._geometry_bounds(geometry)
         dims = tuple(max(bmax - bmin, 1e-4) for bmin, bmax in zip(bbox_min, bbox_max))
         center = tuple((bmin + bmax) / 2 for bmin, bmax in zip(bbox_min, bbox_max))
@@ -372,6 +385,7 @@ class LuminaryCFDPipeline:
             max=Vector3(*max_corner),
         )
         geometry.add_farfield(farfield_shape)
+        _check_cancellation()
         geometry_ok, issues = geometry.check()
         callback(f"Geometry check returned ok={geometry_ok}. Issues: {issues}")
         if not geometry_ok:
@@ -379,6 +393,7 @@ class LuminaryCFDPipeline:
                 "Geometry check failed. Please resolve the reported issues and try again."
             )
 
+        _check_cancellation()
         callback("Generating mesh with Luminary meshing service …")
         mesh_params = MeshGenerationParams(
             geometry_id=geometry.id,
@@ -389,6 +404,7 @@ class LuminaryCFDPipeline:
         mesh = project.create_or_get_mesh(mesh_params, name=f"{case_name}-mesh")
         mesh_status = mesh.wait(interval_seconds=10)
         callback(f"Mesh generation finished with status {mesh_status.name}.")
+        _check_cancellation()
         if mesh_status.name != "COMPLETED":
             raise RuntimeError(f"Meshing failed with status {mesh_status.name}")
 
@@ -494,6 +510,7 @@ class LuminaryCFDPipeline:
         physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
         self._setup_stopping_conditions(template, physics_id, body_surfaces, callback)
 
+        _check_cancellation()
         callback("Launching simulation …")
 
         simulation = project.create_simulation(
@@ -503,6 +520,7 @@ class LuminaryCFDPipeline:
         )
         status = simulation.wait(interval_seconds=15, print_residuals=False)
         callback(f"Simulation completed with status {status.name}.")
+        _check_cancellation()
         if status.name != "COMPLETED":
             detail = self._fetch_failure_details(simulation)
             if detail:

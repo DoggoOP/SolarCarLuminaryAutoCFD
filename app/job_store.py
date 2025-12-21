@@ -106,6 +106,27 @@ class JobStore:
         for job_id in jobs_to_remove:
             del self._jobs[job_id]
 
+    def cancel(self, job_id: str) -> bool:
+        """Cancel a running job. Returns True if job was cancelled, False if not found or already completed."""
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if not record:
+                return False
+            # Only allow cancelling jobs that are pending or in progress
+            if record.status in ("completed", "failed", "cancelled"):
+                return False
+            record.status = "cancelled"
+            record.completed_at = time.time()
+            return True
+
+    def is_cancelled(self, job_id: str) -> bool:
+        """Check if a job has been cancelled."""
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if not record:
+                return False
+            return record.status == "cancelled"
+
     def list_jobs(self) -> List[Dict[str, object]]:
         """Return all jobs sorted by creation time (newest first)."""
         with self._lock:

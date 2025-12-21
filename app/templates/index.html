@@ -49,6 +49,19 @@
         font-weight: 600;
         cursor: pointer;
       }
+      button.cancel-btn {
+        background: #dc2626;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.85rem;
+        margin-left: 0.75rem;
+      }
+      button.cancel-btn:hover {
+        background: #b91c1c;
+      }
+      button.cancel-btn:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
       .jobs {
         display: flex;
         flex-direction: column;
@@ -224,6 +237,27 @@
         }
       });
 
+      async function cancelJob(jobId) {
+        if (!confirm('Are you sure you want to cancel this job?')) {
+          return;
+        }
+
+        try {
+          const response = await fetch(`/jobs/${jobId}/cancel`, {
+            method: 'POST',
+          });
+
+          if (response.ok) {
+            await refreshJobs();
+          } else {
+            const data = await response.json();
+            alert(`Failed to cancel job: ${data.detail || 'Unknown error'}`);
+          }
+        } catch (error) {
+          alert(`Failed to cancel job: ${error.message}`);
+        }
+      }
+
       async function refreshJobs() {
         const response = await fetch("/jobs");
         if (!response.ok) {
@@ -235,12 +269,17 @@
             (job) => {
               const isLatest = job.id === latestJobId;
               const highlightStyle = isLatest ? 'border-left: 4px solid #4338ca;' : '';
+              const canCancel = job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled';
+              const cancelBtn = canCancel
+                ? `<button class="cancel-btn" onclick="cancelJob('${job.id}')">Cancel</button>`
+                : '';
               return `
             <div class="job" style="${highlightStyle}">
               <h3>
                 ${job.title}
                 <span class="badge">${job.status}</span>
                 ${job.created_at ? `<small style="color:#64748b;font-weight:normal;margin-left:0.5rem;">${job.created_at}</small>` : ''}
+                ${cancelBtn}
               </h3>
               ${
                 job.result
