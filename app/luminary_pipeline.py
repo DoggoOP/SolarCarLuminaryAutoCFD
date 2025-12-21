@@ -479,8 +479,6 @@ class LuminaryCFDPipeline:
             ground_speed=config.ground_speed,
         )
         tmp_params = self._template_builder.dump_payload(payload, label=case_name)
-        # Debug: log the motion data being sent
-        callback(f"DEBUG motionData: {json.dumps(payload.get('motionData', []), indent=2)}")
         try:
             template = project.create_simulation_template(
                 f"{case_name}-template",

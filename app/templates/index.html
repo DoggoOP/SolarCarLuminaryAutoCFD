@@ -76,6 +76,17 @@
         color: #312e81;
         margin-left: 0.5rem;
       }
+      #result {
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        background: #f0f9ff;
+        border-left: 4px solid #4338ca;
+      }
+      #result:empty {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -182,20 +193,34 @@
       const resultBox = document.getElementById("result");
       const jobsBox = document.getElementById("jobs");
 
+      let latestJobId = null;
+
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const formData = new FormData(form);
+
+        // Clear previous messages
         resultBox.textContent = "Submitting …";
+        resultBox.style.color = "#4338ca";
+
         const response = await fetch("/run", {
           method: "POST",
           body: formData,
         });
         const payload = await response.json();
         if (response.ok) {
-          resultBox.textContent = `Submitted. Job id: ${payload.job_id}`;
-          refreshJobs();
+          latestJobId = payload.job_id;
+          resultBox.textContent = `✓ Job submitted successfully: ${payload.job_id}`;
+          resultBox.style.color = "#059669";
+
+          // Immediately refresh jobs to show the new one at top
+          await refreshJobs();
+
+          // Scroll to jobs section
+          document.getElementById("jobs").scrollIntoView({ behavior: "smooth" });
         } else {
-          resultBox.textContent = payload.detail || "Submission failed";
+          resultBox.textContent = `✗ ${payload.detail || "Submission failed"}`;
+          resultBox.style.color = "#b91c1c";
         }
       });
 
@@ -207,9 +232,16 @@
         const jobs = await response.json();
         jobsBox.innerHTML = jobs
           .map(
-            (job) => `
-            <div class="job">
-              <h3>${job.title} <span class="badge">${job.status}</span></h3>
+            (job) => {
+              const isLatest = job.id === latestJobId;
+              const highlightStyle = isLatest ? 'border-left: 4px solid #4338ca;' : '';
+              return `
+            <div class="job" style="${highlightStyle}">
+              <h3>
+                ${job.title}
+                <span class="badge">${job.status}</span>
+                ${job.created_at ? `<small style="color:#64748b;font-weight:normal;margin-left:0.5rem;">${job.created_at}</small>` : ''}
+              </h3>
               ${
                 job.result
                   ? `<p>Simulation ID: ${job.result.simulation_id}</p>`
@@ -224,6 +256,7 @@
                   .join("\n") || "No log entries yet."
               }</pre>
             </div>`
+            }
           )
           .join("");
       }
