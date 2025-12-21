@@ -244,7 +244,8 @@ class LuminaryCFDPipeline:
     def _client_or_create(self) -> lc.Client:
         if not self._client:
             self._client = lc.Client(api_key=self._settings.luminary_api_key)
-            # Don't set global default client - each pipeline instance should be isolated
+            # Set as default client for this pipeline instance's operations
+            lc.set_default_client(self._client)
         return self._client
 
     def _setup_stopping_conditions(
@@ -586,12 +587,12 @@ class LuminaryCFDPipeline:
         self, client: lc.Client, project_name: str, callback: StatusCallback
     ) -> lc.Project:
         callback(f"Ensuring project '{project_name}' exists …")
-        for existing in client.list_projects():
+        for existing in lc.list_projects():
             if existing.name == project_name:
                 callback(f"Re-using existing project {existing.id}.")
                 return existing
         callback("Project not found. Creating a new project …")
-        return client.create_project(project_name, "Auto-created by the AutoCFD pipeline.")
+        return lc.create_project(project_name, "Auto-created by the AutoCFD pipeline.")
 
     @staticmethod
     def _collect_surface_metadata(metadata: Any) -> Dict[str, Any]:
