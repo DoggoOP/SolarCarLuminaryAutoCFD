@@ -47,6 +47,7 @@ class CaseConfig:
     body_surfaces: Optional[Sequence[str]] = None
     floor_surfaces: Optional[Sequence[str]] = None
     farfield_surfaces: Optional[Sequence[str]] = None
+    ground_speed: float = 24.59  # Vehicle forward speed for moving floor (m/s)
 
 
 class SimulationTemplateBuilder:
@@ -68,6 +69,7 @@ class SimulationTemplateBuilder:
         farfield_speed: float,
         sound_speed: float,
         frontal_area: float,
+        ground_speed: float = 24.59,
     ) -> dict:
         payload = copy.deepcopy(self._base_payload)
         ref_values = payload.setdefault("referenceValues", {})
@@ -114,8 +116,8 @@ class SimulationTemplateBuilder:
 
         uniform_v = physics.setdefault("initializationFluid", {}).setdefault("uniformV", {})
         _set_vector(uniform_v, farfield_vector)
-        # Use motion frame for moving floor
-        self._attach_floor_motion(payload, floor_surfaces, farfield_speed)
+        # Use motion frame for moving floor (always at constant ground speed, not wind speed)
+        self._attach_floor_motion(payload, floor_surfaces, ground_speed)
         self._normalize_physics_metadata(payload)
         amr = payload.setdefault("adaptiveMeshRefinement", {})
         amr["meshingMethod"] = "MESH_METHOD_AUTO"
@@ -160,13 +162,20 @@ class SimulationTemplateBuilder:
         floor_surfaces: Sequence[str],
         speed: float,
     ) -> None:
+        """
+        Attach moving floor boundary condition.
+
+        The floor moves at constant forward speed (ground speed) to simulate
+        the vehicle moving through stationary air. This is independent of the
+        wind speed/direction for crosswind scenarios.
+        """
         if not floor_surfaces:
             return
         current_motion = payload.setdefault("motionData", [])
         filtered_motion = [
             entry for entry in current_motion if entry.get("frameId") != "moving_floor_frame"
         ]
-        # Moving floor velocity in x-direction at wind speed
+        # Moving floor velocity in x-direction at ground speed
         zero_vector = {
             "x": {"value": 0.0},
             "y": {"value": 0.0},
@@ -454,6 +463,11 @@ class LuminaryCFDPipeline:
         farfield_vector = self._direction_vector(
             config.farfield_direction, config.farfield_speed
         )
+        # Build simulation payload
+        # Note: For crosswind scenarios (e.g., wind_direction=(-24.59,10,0), wind_speed=26.55):
+        #   - farfield_speed (26.55) = magnitude of wind vector, used for reference velocity and coefficients
+        #   - ground_speed (24.59) = constant forward speed, used for moving floor boundary condition
+        #   This separation ensures the floor moves at vehicle speed, not wind speed
         payload = self._template_builder.build_payload(
             body_surfaces=body_surfaces,
             floor_surfaces=floor_surfaces,
@@ -462,6 +476,7 @@ class LuminaryCFDPipeline:
             farfield_speed=config.farfield_speed,
             sound_speed=self._settings.sound_speed,
             frontal_area=frontal_area,
+            ground_speed=config.ground_speed,
         )
         tmp_params = self._template_builder.dump_payload(payload, label=case_name)
         # Debug: log the motion data being sent
