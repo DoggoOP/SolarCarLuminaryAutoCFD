@@ -6,3 +6,5 @@ pydantic-settings==2.5.2
 luminarycloud==0.22.1
 gspread==6.1.4
 google-auth==2.36.0
+vtk
+numpy
