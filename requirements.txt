@@ -8,3 +8,4 @@ gspread==6.1.4
 google-auth==2.36.0
 vtk
 numpy
+meshio

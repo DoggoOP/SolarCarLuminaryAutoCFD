@@ -783,43 +783,39 @@ class LuminaryCFDPipeline:
         """
         try:
             import numpy as np
+            import tempfile
+            import os
 
             # Download mesh data
             with mesh.download() as download:
-                import tempfile
-                import os
-
                 # Save to temporary file
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.vtu') as tmp:
                     tmp.write(download.read())
                     tmp_path = tmp.name
 
                 try:
-                    # Try to read VTU mesh file
-                    import vtk
-                    from vtk.util.numpy_support import vtk_to_numpy
+                    # Try meshio first (simpler, more reliable)
+                    try:
+                        import meshio
 
-                    reader = vtk.vtkXMLUnstructuredGridReader()
-                    reader.SetFileName(tmp_path)
-                    reader.Update()
+                        mesh_data = meshio.read(tmp_path)
+                        points = mesh_data.points
 
-                    # Extract surface
-                    surface_filter = vtk.vtkDataSetSurfaceFilter()
-                    surface_filter.SetInputConnection(reader.GetOutputPort())
-                    surface_filter.Update()
-                    surface = surface_filter.GetOutput()
+                        # Get all surface triangles
+                        triangles = []
+                        for cell_block in mesh_data.cells:
+                            if cell_block.type == "triangle":
+                                triangles.extend(cell_block.data)
 
-                    # Get points and cells
-                    points = vtk_to_numpy(surface.GetPoints().GetData())
+                        if not triangles:
+                            return 0.0
 
-                    # Calculate projected area
-                    total_area = 0.0
-                    for i in range(surface.GetNumberOfCells()):
-                        cell = surface.GetCell(i)
-                        if cell.GetNumberOfPoints() == 3:  # Triangle
-                            p0 = points[cell.GetPointId(0)]
-                            p1 = points[cell.GetPointId(1)]
-                            p2 = points[cell.GetPointId(2)]
+                        # Calculate projected area
+                        total_area = 0.0
+                        for tri in triangles:
+                            p0 = points[tri[0]]
+                            p1 = points[tri[1]]
+                            p2 = points[tri[2]]
 
                             # Project triangle onto plane perpendicular to axis
                             if axis.lower() == 'x':
@@ -845,17 +841,18 @@ class LuminaryCFDPipeline:
                             area = 0.5 * abs(v1[0] * v2[1] - v1[1] * v2[0])
                             total_area += area
 
-                    return total_area
+                        return total_area
 
-                except ImportError:
-                    # VTK not available, return 0 to trigger fallback
-                    return 0.0
+                    except ImportError:
+                        # meshio not available, return 0
+                        return 0.0
+
                 finally:
                     # Clean up temp file
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
 
-        except Exception:
+        except Exception as e:
             # If anything fails, return 0 to trigger fallback
             return 0.0
 
