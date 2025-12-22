@@ -298,12 +298,12 @@ class LuminaryCFDPipeline:
                 callback(f"  Warning: Could not create stopping condition for {name}: {exc}")
                 # Continue with other residuals even if one fails
 
-        # Create force output definitions for drag, side force, and lift
+        # Create force output definitions for force components (Fx, Fy, Fz)
         callback("Creating force output definitions...")
         force_outputs = [
-            ("Drag", QuantityType.DRAG),
-            ("Side Force", QuantityType.SIDEFORCE),
-            ("Lift", QuantityType.LIFT),
+            ("Force X", QuantityType.FORCE_X),
+            ("Force Y", QuantityType.FORCE_Y),
+            ("Force Z", QuantityType.FORCE_Z),
         ]
 
         for name, quantity in force_outputs:
@@ -312,7 +312,8 @@ class LuminaryCFDPipeline:
                     name=name,
                     quantity=quantity,
                     surfaces=list(body_surfaces),
-                    reference_frame_id="body_frame_id",
+                    # Use global frame (which is the body frame for stationary vehicle)
+                    reference_frame_id="global_frame_id",
                 )
                 template.create_output_definition(force_def)
                 callback(f"  Created force output: {name}")
@@ -552,6 +553,7 @@ class LuminaryCFDPipeline:
                 }
                 self._sheets_logger.append_result(
                     job_name=case_name,
+                    project_id=project.id,
                     simulation_id=simulation.id,
                     force_results=force_results,
                     wind_speed=config.farfield_speed,
@@ -574,11 +576,11 @@ class LuminaryCFDPipeline:
         }
 
         # Log force values for visibility
-        if "drag_force" in force_results:
+        if "force_x" in force_results:
             callback(
-                f"Results: Drag={force_results['drag_force']:.3f}N (Cd={force_results.get('drag_coefficient', 0):.4f}), "
-                f"Lift={force_results['lift_force']:.3f}N (Cl={force_results.get('lift_coefficient', 0):.4f}), "
-                f"Side={force_results['sideforce']:.3f}N (Cs={force_results.get('sideforce_coefficient', 0):.4f})"
+                f"Results: Fx={force_results['force_x']:.3f}N (Cx={force_results.get('coeff_x', 0):.4f}), "
+                f"Fy={force_results['force_y']:.3f}N (Cy={force_results.get('coeff_y', 0):.4f}), "
+                f"Fz={force_results['force_z']:.3f}N (Cz={force_results.get('coeff_z', 0):.4f})"
             )
 
         return result
@@ -783,11 +785,11 @@ class LuminaryCFDPipeline:
                 results["error"] = "No body surfaces found"
                 return results
 
-            # Download force outputs for each force type
+            # Download force outputs for each force component (Fx, Fy, Fz)
             force_types = [
-                (QuantityType.DRAG, "drag_force"),
-                (QuantityType.LIFT, "lift_force"),
-                (QuantityType.SIDEFORCE, "sideforce"),
+                (QuantityType.FORCE_X, "force_x"),
+                (QuantityType.FORCE_Y, "force_y"),
+                (QuantityType.FORCE_Z, "force_z"),
             ]
 
             for quantity_type, result_key in force_types:
@@ -796,7 +798,7 @@ class LuminaryCFDPipeline:
                         quantity_type=quantity_type,
                         surface_ids=body_surfaces,
                         calculation_type=CalculationType.AGGREGATE,
-                        frame_id="body_frame_id"
+                        frame_id="global_frame_id"
                     ) as dl:
                         content = dl.read()
                         # Parse CSV and get last value
@@ -812,12 +814,12 @@ class LuminaryCFDPipeline:
                     # If this force type fails, continue with others
                     results[result_key] = 0.0
 
-            # Calculate coefficients: C = F / (0.5 * rho * V^2 * A)
+            # Calculate force coefficients: C = F / (0.5 * rho * V^2 * A)
             q_inf = 0.5 * ref_density * ref_velocity ** 2 * ref_area
             if q_inf > 0:
-                results["drag_coefficient"] = results.get("drag_force", 0) / q_inf
-                results["lift_coefficient"] = results.get("lift_force", 0) / q_inf
-                results["sideforce_coefficient"] = results.get("sideforce", 0) / q_inf
+                results["coeff_x"] = results.get("force_x", 0) / q_inf
+                results["coeff_y"] = results.get("force_y", 0) / q_inf
+                results["coeff_z"] = results.get("force_z", 0) / q_inf
 
         except Exception as exc:
             # If fetching fails, return error

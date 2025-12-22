@@ -184,7 +184,14 @@
             <span class="badge">{{ job.status }}</span>
           </h3>
           {% if job.result %}
-          <p>Simulation ID: {{ job.result.simulation_id }}</p>
+          <p>
+            <a href="https://app.luminarycloud.com/project/{{ job.result.project_id }}/simulation/{{ job.result.simulation_id }}" target="_blank" style="color:#4338ca;font-weight:600;">
+              View Simulation in Luminary Cloud →
+            </a>
+          </p>
+          <p style="font-size:0.85rem;color:#64748b;">
+            Simulation ID: {{ job.result.simulation_id }}
+          </p>
           {% endif %}
           {% if job.error %}
           <p style="color: #b91c1c;">{{ job.error }}</p>
@@ -283,7 +290,16 @@
               </h3>
               ${
                 job.result
-                  ? `<p>Simulation ID: ${job.result.simulation_id}</p>`
+                  ? `<p>
+                       <a href="https://app.luminarycloud.com/project/${job.result.project_id}/simulation/${job.result.simulation_id}"
+                          target="_blank"
+                          style="color:#4338ca;font-weight:600;">
+                         View Simulation in Luminary Cloud →
+                       </a>
+                     </p>
+                     <p style="font-size:0.85rem;color:#64748b;">
+                       Simulation ID: ${job.result.simulation_id}
+                     </p>`
                   : ""
               }
               ${

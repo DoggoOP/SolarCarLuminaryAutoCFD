@@ -89,12 +89,12 @@ class SheetsLogger:
             "Timestamp",
             "Job Name",
             "Simulation ID",
-            "Drag Force (N)",
-            "Drag Coefficient",
-            "Lift Force (N)",
-            "Lift Coefficient",
-            "Side Force (N)",
-            "Side Force Coefficient",
+            "Force X (N)",
+            "Coefficient X",
+            "Force Y (N)",
+            "Coefficient Y",
+            "Force Z (N)",
+            "Coefficient Z",
             "Convergence Status",
             "Max Iterations",
             "Wind Speed (m/s)",
@@ -116,6 +116,7 @@ class SheetsLogger:
     def append_result(
         self,
         job_name: str,
+        project_id: str,
         simulation_id: str,
         force_results: Dict[str, float],
         wind_speed: float,
@@ -129,6 +130,8 @@ class SheetsLogger:
         ----------
         job_name : str
             Name/label of the simulation job
+        project_id : str
+            Luminary Cloud project ID
         simulation_id : str
             Luminary Cloud simulation ID
         force_results : dict
@@ -147,18 +150,19 @@ class SheetsLogger:
 
         # Prepare row data
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        luminary_link = f"https://platform.luminarycloud.com/simulation/{simulation_id}"
+        # Use HYPERLINK formula to make link clickable in Google Sheets
+        luminary_link = f'=HYPERLINK("https://app.luminarycloud.com/project/{project_id}/simulation/{simulation_id}", "View Simulation")'
 
         row_data = [
             timestamp,
             job_name,
             simulation_id,
-            force_results.get("drag_force", "N/A"),
-            force_results.get("drag_coefficient", "N/A"),
-            force_results.get("lift_force", "N/A"),
-            force_results.get("lift_coefficient", "N/A"),
-            force_results.get("sideforce", "N/A"),
-            force_results.get("sideforce_coefficient", "N/A"),
+            force_results.get("force_x", "N/A"),
+            force_results.get("coeff_x", "N/A"),
+            force_results.get("force_y", "N/A"),
+            force_results.get("coeff_y", "N/A"),
+            force_results.get("force_z", "N/A"),
+            force_results.get("coeff_z", "N/A"),
             convergence_info.get("status", "Unknown"),
             convergence_info.get("iterations", "N/A"),
             wind_speed,

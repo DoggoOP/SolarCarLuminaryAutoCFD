@@ -133,12 +133,14 @@ def backfill_results(
                 continue
 
             # Display results
-            drag = force_results.get("drag_force", "N/A")
-            lift = force_results.get("lift_force", "N/A")
-            side = force_results.get("sideforce", "N/A")
-            cd = force_results.get("drag_coefficient", "N/A")
+            fx = force_results.get("force_x", "N/A")
+            fy = force_results.get("force_y", "N/A")
+            fz = force_results.get("force_z", "N/A")
+            cx = force_results.get("coeff_x", "N/A")
+            cy = force_results.get("coeff_y", "N/A")
+            cz = force_results.get("coeff_z", "N/A")
 
-            print(f"  Results: Drag={drag:.3f}N (Cd={cd:.4f})")
+            print(f"  Results: Fx={fx:.3f}N (Cx={cx:.4f}), Fy={fy:.3f}N (Cy={cy:.4f}), Fz={fz:.3f}N (Cz={cz:.4f})")
 
             if not dry_run:
                 # Log to sheets
@@ -149,6 +151,7 @@ def backfill_results(
 
                 sheets_logger.append_result(
                     job_name=sim_name,
+                    project_id=project.id,
                     simulation_id=sim_id,
                     force_results=force_results,
                     wind_speed=ref_velocity,
