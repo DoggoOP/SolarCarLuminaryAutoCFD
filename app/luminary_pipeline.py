@@ -298,12 +298,16 @@ class LuminaryCFDPipeline:
                 callback(f"  Warning: Could not create stopping condition for {name}: {exc}")
                 # Continue with other residuals even if one fails
 
-        # Create force output definitions for force components (Fx, Fy, Fz)
+        # Create force output definitions
+        # In global frame (body frame for stationary vehicle):
+        # DRAG = force along x-axis (backward = positive drag)
+        # SIDEFORCE = force along y-axis (lateral)
+        # LIFT = force along z-axis (upward = positive lift)
         callback("Creating force output definitions...")
         force_outputs = [
-            ("Force X", QuantityType.FORCE_X),
-            ("Force Y", QuantityType.FORCE_Y),
-            ("Force Z", QuantityType.FORCE_Z),
+            ("Drag (Fx)", QuantityType.DRAG),
+            ("Side Force (Fy)", QuantityType.SIDEFORCE),
+            ("Lift (Fz)", QuantityType.LIFT),
         ]
 
         for name, quantity in force_outputs:
@@ -785,11 +789,12 @@ class LuminaryCFDPipeline:
                 results["error"] = "No body surfaces found"
                 return results
 
-            # Download force outputs for each force component (Fx, Fy, Fz)
+            # Download force outputs
+            # In global frame: DRAG=Fx (along x), SIDEFORCE=Fy (along y), LIFT=Fz (along z)
             force_types = [
-                (QuantityType.FORCE_X, "force_x"),
-                (QuantityType.FORCE_Y, "force_y"),
-                (QuantityType.FORCE_Z, "force_z"),
+                (QuantityType.DRAG, "force_x"),        # Drag is force along x-axis
+                (QuantityType.SIDEFORCE, "force_y"),   # Side force is force along y-axis
+                (QuantityType.LIFT, "force_z"),        # Lift is force along z-axis
             ]
 
             for quantity_type, result_key in force_types:
