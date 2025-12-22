@@ -106,6 +106,7 @@ async def run_case(
     wind_direction: str = Form("1,0,0"),
     mesh_min_size: float = Form(0.002),
     mesh_max_size: float = Form(0.05),
+    frontal_area: str = Form(""),
     body_surfaces: str = Form(""),
     floor_surfaces: str = Form(""),
     farfield_surfaces: str = Form(""),
@@ -129,6 +130,7 @@ async def run_case(
     farfield_surface_list = _parse_surfaces(farfield_surfaces)
     padding_raw = _parse_optional_float(farfield_padding)
     farfield_padding_value = 0.0 if padding_raw is None else padding_raw
+    frontal_area_override = _parse_optional_float(frontal_area)
 
     file_suffix = Path(cad_file.filename).suffix or ".cad"
     upload_path = settings.uploads_dir / f"{uuid4().hex}{file_suffix}"
@@ -150,6 +152,7 @@ async def run_case(
         farfield_multiplier=farfield_multiplier,
         farfield_padding=farfield_padding_value,
         farfield_center_override=farfield_center_vec,
+        frontal_area_override=frontal_area_override,
         body_surfaces=body_surface_list or None,
         floor_surfaces=floor_surface_list or None,
         farfield_surfaces=farfield_surface_list or None,

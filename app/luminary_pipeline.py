@@ -424,17 +424,17 @@ class LuminaryCFDPipeline:
         surface_names = sorted(surface_map.keys())
         callback(f"Detected surfaces: {', '.join(surface_names) or 'none'}")
 
-        # Calculate actual frontal area from mesh before surface inference
-        if not config.frontal_area_override:
+        # Calculate frontal area if not manually provided
+        if frontal_area is None:  # Not set yet (no manual override)
             callback("Computing actual frontal area from mesh geometry...")
             frontal_area_computed = self._compute_projected_area_from_mesh(mesh, axis='x')
             if frontal_area_computed > 0:
                 frontal_area = frontal_area_computed
-                callback(f"Computed frontal area from mesh projection: {frontal_area:.4f} m²")
+                callback(f"✓ Computed frontal area from mesh projection: {frontal_area:.4f} m²")
             else:
                 # Fallback to bounding box
                 frontal_area = self._calculate_frontal_area(bbox_min, bbox_max)
-                callback(f"Using bounding box frontal area (mesh projection failed): {frontal_area:.4f} m²")
+                callback(f"⚠ Using bounding box frontal area (mesh projection unavailable): {frontal_area:.4f} m²")
 
         floor_surfaces = list(
             config.floor_surfaces
