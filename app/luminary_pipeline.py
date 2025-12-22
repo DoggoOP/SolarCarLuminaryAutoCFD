@@ -545,6 +545,7 @@ class LuminaryCFDPipeline:
             ref_area=frontal_area,
             ref_velocity=config.farfield_speed,
             project=project,
+            body_surfaces=body_surfaces,
         )
 
         # Log results to Google Sheets if configured
@@ -753,6 +754,7 @@ class LuminaryCFDPipeline:
         ref_velocity: float,
         ref_density: float = 1.225,
         project: Optional[lc.Project] = None,
+        body_surfaces: Optional[List[str]] = None,
     ) -> Dict[str, float]:
         """Fetch force output values and calculate coefficients."""
         results = {}
@@ -766,24 +768,26 @@ class LuminaryCFDPipeline:
                 results["error"] = "Project not provided"
                 return results
 
-            # Get the mesh to find body surfaces
-            mesh = None
-            for m in project.list_meshes():
-                if m.id == simulation.mesh_id:
-                    mesh = m
-                    break
+            # Use provided body surfaces, or try to infer them as fallback
+            if not body_surfaces:
+                # Get the mesh to find body surfaces
+                mesh = None
+                for m in project.list_meshes():
+                    if m.id == simulation.mesh_id:
+                        mesh = m
+                        break
 
-            if not mesh:
-                results["error"] = "Mesh not found"
-                return results
+                if not mesh:
+                    results["error"] = "Mesh not found"
+                    return results
 
-            # Get boundary names from mesh metadata
-            metadata = mesh.get_metadata()
-            boundaries = metadata.zones[0].boundaries
-            all_surfaces = [b.name for b in boundaries]
+                # Get boundary names from mesh metadata
+                metadata = mesh.get_metadata()
+                boundaries = metadata.zones[0].boundaries
+                all_surfaces = [b.name for b in boundaries]
 
-            # Filter to body surfaces (exclude farfield/floor which have BC_13x/BC_14x pattern)
-            body_surfaces = [s for s in all_surfaces if 'BC_13' not in s and 'BC_14' not in s]
+                # Filter to body surfaces (exclude farfield/floor - this is a fallback heuristic)
+                body_surfaces = [s for s in all_surfaces if 'BC_13' not in s and 'BC_14' not in s]
 
             if not body_surfaces:
                 results["error"] = "No body surfaces found"
