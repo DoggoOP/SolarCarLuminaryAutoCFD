@@ -9,8 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import numpy as np
 import luminarycloud as lc
-from luminarycloud.enum import QuantityType, ResidualType
+from luminarycloud.enum import QuantityType, ResidualType, CalculationType
 from luminarycloud.meshing import MeshGenerationParams
 from luminarycloud.outputs import ForceOutputDefinition, ResidualOutputDefinition
 from luminarycloud.params.geometry import shapes as geom_shapes
@@ -565,6 +566,26 @@ class LuminaryCFDPipeline:
             body_surfaces=body_surfaces,
         )
 
+        # Calculate center of pressure
+        callback("Calculating center of pressure...")
+        cop_results = self._calculate_center_of_pressure(
+            simulation,
+            body_surfaces=body_surfaces,
+            project=project,
+        )
+        # Merge CoP results into force_results
+        force_results.update(cop_results)
+
+        # Calculate wetted area
+        callback("Calculating wetted area...")
+        wetted_area = self._calculate_wetted_area(simulation, body_surfaces)
+        force_results["wetted_area"] = wetted_area
+
+        # Calculate CdA and CdW
+        cd = force_results.get("coeff_x", 0)
+        force_results["cd_a"] = cd * frontal_area  # Cd × frontal area
+        force_results["cd_w"] = cd * wetted_area if wetted_area > 0 else 0  # Cd × wetted area
+
         # Log results to Google Sheets if configured
         if self._sheets_logger:
             try:
@@ -855,6 +876,137 @@ class LuminaryCFDPipeline:
         except Exception as e:
             # If anything fails, return 0 to trigger fallback
             return 0.0
+
+    @staticmethod
+    def _calculate_wetted_area(
+        simulation: lc.Simulation,
+        body_surfaces: List[str],
+    ) -> float:
+        """
+        Calculate total wetted area of the car body surfaces.
+
+        Parameters
+        ----------
+        simulation : lc.Simulation
+            Completed simulation object
+        body_surfaces : List[str]
+            List of body surface names
+
+        Returns
+        -------
+        float
+            Total wetted area in m²
+        """
+        try:
+            import pandas as pd
+
+            # Download area output for body surfaces
+            with simulation.download_surface_output(
+                QuantityType.AREA,
+                body_surfaces,
+                calculation_type=CalculationType.AGGREGATE,
+            ) as stream:
+                df = pd.read_csv(stream, index_col="Iteration index")
+                df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                # Area should be constant, so just get the last value
+                wetted_area = df.iloc[-1, 0]
+                return float(wetted_area)
+
+        except Exception as exc:
+            # Return 0 if wetted area calculation fails
+            return 0.0
+
+    @staticmethod
+    def _calculate_center_of_pressure(
+        simulation: lc.Simulation,
+        body_surfaces: List[str],
+        project: Optional[lc.Project] = None,
+    ) -> Dict[str, Any]:
+        """
+        Calculate center of pressure for the completed simulation.
+
+        Returns dictionary with:
+            - cop_x, cop_y, cop_z: Center of pressure coordinates (m)
+            - total_force_x, total_force_y, total_force_z: Force components (N)
+            - force_magnitude: Total force magnitude (N)
+            - moment_x, moment_y, moment_z: Moments about origin (N·m)
+        """
+        try:
+            import pandas as pd
+
+            # Get reference values
+            ref_vals = simulation.get_parameters().reference_values
+
+            # Use global_frame_id (body frame for stationary vehicle)
+            frame_id = "global_frame_id"
+
+            # Download force components (average last 10 iterations)
+            force_components = []
+            for direction in [Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)]:
+                with simulation.download_surface_output(
+                    QuantityType.TOTAL_FORCE,
+                    body_surfaces,
+                    reference_values=ref_vals,
+                    calculation_type=CalculationType.AGGREGATE,
+                    frame_id=frame_id,
+                    force_direction=direction,
+                ) as stream:
+                    df = pd.read_csv(stream, index_col="Iteration index")
+                    df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                    avg_force = df.tail(10).iloc[:, 0].mean()
+                    force_components.append(avg_force)
+
+            total_force = np.array(force_components)
+            force_magnitude = np.linalg.norm(total_force)
+
+            # Download moment components about origin
+            moment_components = []
+            for direction in [Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)]:
+                with simulation.download_surface_output(
+                    QuantityType.TOTAL_MOMENT,
+                    body_surfaces,
+                    reference_values=ref_vals,
+                    calculation_type=CalculationType.AGGREGATE,
+                    frame_id=frame_id,
+                    moment_center=Vector3(0, 0, 0),
+                    force_direction=direction,
+                ) as stream:
+                    df = pd.read_csv(stream, index_col="Iteration index")
+                    df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                    avg_moment = df.tail(10).iloc[:, 0].mean()
+                    moment_components.append(avg_moment)
+
+            total_moment = np.array(moment_components)
+
+            # Calculate center of pressure: r_cp = (F × M) / |F|^2
+            if force_magnitude > 1e-10:
+                force_cross_moment = np.cross(total_force, total_moment)
+                cop = force_cross_moment / (force_magnitude ** 2)
+                # Calculate force direction (unit vector)
+                force_direction = total_force / force_magnitude
+            else:
+                cop = np.array([0, 0, 0])
+                force_direction = np.array([0, 0, 0])
+
+            return {
+                "cop_x": float(cop[0]),
+                "cop_y": float(cop[1]),
+                "cop_z": float(cop[2]),
+                "total_force_x": float(total_force[0]),
+                "total_force_y": float(total_force[1]),
+                "total_force_z": float(total_force[2]),
+                "force_magnitude": float(force_magnitude),
+                "force_dir_x": float(force_direction[0]),
+                "force_dir_y": float(force_direction[1]),
+                "force_dir_z": float(force_direction[2]),
+                "moment_x": float(total_moment[0]),
+                "moment_y": float(total_moment[1]),
+                "moment_z": float(total_moment[2]),
+            }
+
+        except Exception as exc:
+            # Return empty dict if CoP calculation fails
+            return {"error": str(exc)}
 
     @staticmethod
     def _fetch_force_results(
