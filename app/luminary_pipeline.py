@@ -959,14 +959,42 @@ class LuminaryCFDPipeline:
         try:
             import pandas as pd
 
-            # Download the area output (created during setup as "Body Surface Area")
-            # Area outputs are constant over iterations, so just get the last value
-            with simulation.download_output("Body Surface Area") as stream:
-                df = pd.read_csv(stream, index_col="Iteration index")
-                df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                # Get the last value (area should be constant)
-                wetted_area = df.iloc[-1, 0]
-                return float(wetted_area)
+            # List all outputs to find the area output
+            if callback:
+                callback("DEBUG: Listing simulation outputs to find area...")
+
+            # Try to find area output in simulation
+            try:
+                outputs = simulation.list_output_definitions()
+                area_output_id = None
+                for output_def in outputs:
+                    if hasattr(output_def, 'name') and 'area' in output_def.name.lower():
+                        area_output_id = output_def.id
+                        if callback:
+                            callback(f"DEBUG: Found area output: {output_def.name} (ID: {area_output_id})")
+                        break
+
+                if area_output_id is None:
+                    if callback:
+                        output_names = [o.name if hasattr(o, 'name') else str(o) for o in outputs[:5]]
+                        callback(f"DEBUG: Available outputs: {output_names}")
+                    return 0.0
+
+                # Try downloading with the output definition
+                with simulation.download_surface_output(
+                    QuantityType.AREA,
+                    body_surfaces,
+                    calculation_type=CalculationType.AGGREGATE,
+                ) as stream:
+                    df = pd.read_csv(stream, index_col="Iteration index")
+                    df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                    wetted_area = df.iloc[-1, 0]
+                    return float(wetted_area)
+
+            except Exception as list_exc:
+                if callback:
+                    callback(f"DEBUG: Error accessing outputs: {list_exc}")
+                return 0.0
 
         except Exception as exc:
             if callback:
