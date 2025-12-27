@@ -91,6 +91,9 @@ class SheetsLogger:
             "Job Name",
             "Simulation ID",
             "Wind Speed (m/s)",
+            "Wind Direction X",
+            "Wind Direction Y",
+            "Wind Direction Z",
             "Frontal Area (m²)",
             "Wetted Area (m²)",
             # Drag results grouped together
@@ -122,11 +125,11 @@ class SheetsLogger:
             # Link
             "Luminary Link",
         ]
-        self._sheet.update("A1:AB1", [headers])
+        self._sheet.update("A1:AE1", [headers])
 
         # Format header row
         self._sheet.format(
-            "A1:AB1",
+            "A1:AE1",
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
@@ -141,6 +144,7 @@ class SheetsLogger:
         simulation_id: str,
         force_results: Dict[str, float],
         wind_speed: float,
+        wind_direction: tuple,
         frontal_area: float,
         convergence_info: Dict[str, Any],
     ) -> None:
@@ -159,6 +163,8 @@ class SheetsLogger:
             Dictionary containing drag, lift, and side force values and coefficients
         wind_speed : float
             Reference wind speed in m/s
+        wind_direction : tuple
+            Wind direction vector (x, y, z)
         frontal_area : float
             Reference frontal area in m²
         convergence_info : dict
@@ -181,6 +187,9 @@ class SheetsLogger:
             job_name,
             simulation_id,
             wind_speed,
+            wind_direction[0],  # Wind Direction X
+            wind_direction[1],  # Wind Direction Y
+            wind_direction[2],  # Wind Direction Z
             frontal_area,
             force_results.get("wetted_area", "N/A"),
             # Drag results grouped together

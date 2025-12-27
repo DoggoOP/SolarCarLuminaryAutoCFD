@@ -305,7 +305,7 @@ class LuminaryCFDPipeline:
         # DRAG = force along x-axis (backward = positive drag)
         # SIDEFORCE = force along y-axis (lateral)
         # LIFT = force along z-axis (upward = positive lift)
-        callback("Creating force and area output definitions...")
+        callback("Creating force output definitions...")
         force_outputs = [
             ("Drag (Fx)", QuantityType.DRAG),
             ("Side Force (Fy)", QuantityType.SIDEFORCE),
@@ -326,19 +326,6 @@ class LuminaryCFDPipeline:
             except Exception as exc:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
-
-        # Create area output for wetted area calculation
-        try:
-            from luminarycloud.outputs import SurfaceAverageOutputDefinition
-            area_def = SurfaceAverageOutputDefinition(
-                name="Body Surface Area",
-                quantity=QuantityType.AREA,
-                surfaces=list(body_surfaces),
-            )
-            template.create_output_definition(area_def)
-            callback("  Created area output: Body Surface Area")
-        except Exception as exc:
-            callback(f"  Warning: Could not create area output: {exc}")
 
     def run_case(
         self,
@@ -655,6 +642,7 @@ class LuminaryCFDPipeline:
                     simulation_id=simulation.id,
                     force_results=force_results,
                     wind_speed=config.farfield_speed,
+                    wind_direction=config.farfield_direction,
                     frontal_area=frontal_area,
                     convergence_info=convergence_info,
                 )
@@ -939,7 +927,7 @@ class LuminaryCFDPipeline:
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
-        Calculate total wetted area of the car body surfaces.
+        Calculate total wetted area of the car body surfaces from mesh metadata.
 
         Parameters
         ----------
@@ -956,19 +944,21 @@ class LuminaryCFDPipeline:
             Total wetted area in m²
         """
         try:
-            import pandas as pd
+            # Get mesh from simulation
+            mesh = lc.get_mesh(simulation.mesh_id)
+            metadata = mesh.get_metadata()
 
-            # Download area output for body surfaces
-            with simulation.download_surface_output(
-                QuantityType.AREA,
-                body_surfaces,
-                calculation_type=CalculationType.AGGREGATE,
-            ) as stream:
-                df = pd.read_csv(stream, index_col="Iteration index")
-                df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                # Area should be constant, so just get the last value
-                wetted_area = df.iloc[-1, 0]
-                return float(wetted_area)
+            # Collect surface areas from mesh boundary statistics
+            total_area = 0.0
+            for zone in metadata.zones:
+                for boundary in zone.boundaries:
+                    # Check if this boundary is in our body surfaces list
+                    if boundary.name in body_surfaces:
+                        # Get area from boundary statistics
+                        if hasattr(boundary, 'stats') and hasattr(boundary.stats, 'area'):
+                            total_area += boundary.stats.area
+
+            return float(total_area)
 
         except Exception as exc:
             # Log the error and return 0
