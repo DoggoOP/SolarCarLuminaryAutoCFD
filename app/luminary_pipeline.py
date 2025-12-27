@@ -305,7 +305,7 @@ class LuminaryCFDPipeline:
         # DRAG = force along x-axis (backward = positive drag)
         # SIDEFORCE = force along y-axis (lateral)
         # LIFT = force along z-axis (upward = positive lift)
-        callback("Creating force output definitions...")
+        callback("Creating force and area output definitions...")
         force_outputs = [
             ("Drag (Fx)", QuantityType.DRAG),
             ("Side Force (Fy)", QuantityType.SIDEFORCE),
@@ -326,6 +326,19 @@ class LuminaryCFDPipeline:
             except Exception as exc:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
+
+        # Create area output for wetted area calculation
+        try:
+            from luminarycloud.outputs import SurfaceAverageOutputDefinition
+            area_def = SurfaceAverageOutputDefinition(
+                name="Body Surface Area",
+                quantity=QuantityType.AREA,
+                surfaces=list(body_surfaces),
+            )
+            template.create_output_definition(area_def)
+            callback("  Created area output: Body Surface Area")
+        except Exception as exc:
+            callback(f"  Warning: Could not create area output: {exc}")
 
     def run_case(
         self,
@@ -616,10 +629,12 @@ class LuminaryCFDPipeline:
 
         # Calculate wetted area
         callback(f"Calculating wetted area using {len(body_surfaces)} body surfaces...")
-        wetted_area = self._calculate_wetted_area(simulation, body_surfaces)
+        wetted_area = self._calculate_wetted_area(simulation, body_surfaces, callback)
         force_results["wetted_area"] = wetted_area
         if wetted_area > 0:
             callback(f"✓ Wetted area: {wetted_area:.4f} m²")
+        else:
+            callback("⚠ Wetted area returned 0 - check error above")
 
         # Calculate CdA and CdW
         cd = force_results.get("coeff_x", 0)
@@ -921,6 +936,7 @@ class LuminaryCFDPipeline:
     def _calculate_wetted_area(
         simulation: lc.Simulation,
         body_surfaces: List[str],
+        callback: Optional[StatusCallback] = None,
     ) -> float:
         """
         Calculate total wetted area of the car body surfaces.
@@ -931,6 +947,8 @@ class LuminaryCFDPipeline:
             Completed simulation object
         body_surfaces : List[str]
             List of body surface names
+        callback : Optional[StatusCallback]
+            Callback for logging messages
 
         Returns
         -------
@@ -953,7 +971,9 @@ class LuminaryCFDPipeline:
                 return float(wetted_area)
 
         except Exception as exc:
-            # Return 0 if wetted area calculation fails
+            # Log the error and return 0
+            if callback:
+                callback(f"Warning: Wetted area calculation failed: {exc}")
             return 0.0
 
     @staticmethod
@@ -976,15 +996,9 @@ class LuminaryCFDPipeline:
 
             # Get reference values
             ref_vals = simulation.get_parameters().reference_values
-            sim_params = simulation.get_parameters()
 
-            # Try to get body frame ID from motion_data, fall back to global_frame_id
-            frame_id = "global_frame_id"  # Default for stationary body
-            if hasattr(sim_params, 'motion_data') and sim_params.motion_data:
-                for frame in sim_params.motion_data:
-                    if hasattr(frame, 'frame_name') and frame.frame_name == "Body Frame":
-                        frame_id = frame.frame_id
-                        break
+            # Use global frame for CoP calculation (not body frame which may be rotated)
+            frame_id = "global_frame_id"
 
             # Download force components (average last 10 iterations)
             force_components = []
