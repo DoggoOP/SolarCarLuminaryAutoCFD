@@ -950,13 +950,51 @@ class LuminaryCFDPipeline:
 
             # Collect surface areas from mesh boundary statistics
             total_area = 0.0
+            boundaries_found = 0
+            boundaries_with_area = 0
+
+            if callback:
+                callback(f"DEBUG: Looking for {len(body_surfaces)} body surfaces in mesh metadata")
+
             for zone in metadata.zones:
                 for boundary in zone.boundaries:
                     # Check if this boundary is in our body surfaces list
                     if boundary.name in body_surfaces:
-                        # Get area from boundary statistics
+                        boundaries_found += 1
+                        # Try multiple ways to get area
+                        area = None
+
+                        # Try 1: boundary.stats.area
                         if hasattr(boundary, 'stats') and hasattr(boundary.stats, 'area'):
-                            total_area += boundary.stats.area
+                            area = boundary.stats.area
+                        # Try 2: boundary.area
+                        elif hasattr(boundary, 'area'):
+                            area = boundary.area
+                        # Try 3: boundary.stats.surface_area
+                        elif hasattr(boundary, 'stats') and hasattr(boundary.stats, 'surface_area'):
+                            area = boundary.stats.surface_area
+                        # Try 4: Calculate from face count and average face area
+                        elif hasattr(boundary, 'stats') and hasattr(boundary.stats, 'num_faces'):
+                            if callback:
+                                callback(f"DEBUG: {boundary.name} has {boundary.stats.num_faces} faces")
+
+                        if area is not None and area > 0:
+                            total_area += area
+                            boundaries_with_area += 1
+                            if callback:
+                                callback(f"DEBUG: {boundary.name} area = {area:.4f} m²")
+                        else:
+                            if callback:
+                                # Log what attributes the boundary actually has
+                                attrs = [attr for attr in dir(boundary) if not attr.startswith('_')]
+                                if hasattr(boundary, 'stats'):
+                                    stats_attrs = [attr for attr in dir(boundary.stats) if not attr.startswith('_')]
+                                    callback(f"DEBUG: {boundary.name} - stats attributes: {stats_attrs[:10]}")
+                                else:
+                                    callback(f"DEBUG: {boundary.name} - boundary attributes: {attrs[:10]}")
+
+            if callback:
+                callback(f"DEBUG: Found {boundaries_found}/{len(body_surfaces)} surfaces, {boundaries_with_area} with area data")
 
             return float(total_area)
 
