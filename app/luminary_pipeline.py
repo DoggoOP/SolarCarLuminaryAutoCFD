@@ -550,15 +550,45 @@ class LuminaryCFDPipeline:
         callback(f"Simulation completed with status {status.name}.")
         _check_cancellation()
         if status.name != "COMPLETED":
-            detail = self._fetch_failure_details(simulation)
-            if detail:
+            # Try to get detailed error information
+            error_info = []
+
+            # Check simulation object for error messages
+            try:
+                if hasattr(simulation, 'status_message') and simulation.status_message:
+                    error_info.append(f"Status message: {simulation.status_message}")
+            except Exception:
+                pass
+
+            # Check simulation events
+            try:
+                events = simulation.list_events()
+                if events:
+                    error_events = [e for e in events if hasattr(e, 'level') and e.level == 'ERROR']
+                    if error_events:
+                        for event in error_events[-3:]:  # Last 3 errors
+                            error_info.append(f"Event: {event.message if hasattr(event, 'message') else str(event)}")
+            except Exception:
+                pass
+
+            # Try workflow details as fallback
+            workflow_detail = self._fetch_failure_details(simulation)
+            if workflow_detail and "404 Error" not in workflow_detail:
+                error_info.append(workflow_detail)
+
+            if error_info:
+                detail = "; ".join(error_info)
                 callback(f"Failure details: {detail}")
                 raise RuntimeError(
                     f"Simulation terminated with status {status.name}: {detail}"
                 )
-            raise RuntimeError(
-                f"Simulation terminated with status {status.name}. Check Luminary logs."
-            )
+            else:
+                callback(f"Simulation failed with status {status.name}. No detailed error info available.")
+                callback(f"Check simulation in Luminary Cloud UI: https://app.luminarycloud.com/project/{project.id}/simulation/{simulation.id}")
+                raise RuntimeError(
+                    f"Simulation terminated with status {status.name}. "
+                    f"View in Luminary Cloud: https://app.luminarycloud.com/project/{project.id}/simulation/{simulation.id}"
+                )
 
         # Fetch force results
         callback("Fetching force results...")
@@ -571,7 +601,7 @@ class LuminaryCFDPipeline:
         )
 
         # Calculate center of pressure
-        callback("Calculating center of pressure...")
+        callback(f"Calculating center of pressure using {len(body_surfaces)} body surfaces...")
         cop_results = self._calculate_center_of_pressure(
             simulation,
             body_surfaces=body_surfaces,
@@ -585,9 +615,11 @@ class LuminaryCFDPipeline:
         force_results.update(cop_results)
 
         # Calculate wetted area
-        callback("Calculating wetted area...")
+        callback(f"Calculating wetted area using {len(body_surfaces)} body surfaces...")
         wetted_area = self._calculate_wetted_area(simulation, body_surfaces)
         force_results["wetted_area"] = wetted_area
+        if wetted_area > 0:
+            callback(f"✓ Wetted area: {wetted_area:.4f} m²")
 
         # Calculate CdA and CdW
         cd = force_results.get("coeff_x", 0)
