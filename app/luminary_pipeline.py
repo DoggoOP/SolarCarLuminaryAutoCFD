@@ -305,7 +305,7 @@ class LuminaryCFDPipeline:
         # DRAG = force along x-axis (backward = positive drag)
         # SIDEFORCE = force along y-axis (lateral)
         # LIFT = force along z-axis (upward = positive lift)
-        callback("Creating force output definitions...")
+        callback("Creating force and area output definitions...")
         force_outputs = [
             ("Drag (Fx)", QuantityType.DRAG),
             ("Side Force (Fy)", QuantityType.SIDEFORCE),
@@ -326,6 +326,19 @@ class LuminaryCFDPipeline:
             except Exception as exc:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
+
+        # Create area output for wetted area
+        try:
+            from luminarycloud.outputs import SurfaceAverageOutputDefinition
+            area_def = SurfaceAverageOutputDefinition(
+                name="Body Surface Area",
+                quantity=QuantityType.AREA,
+                surfaces=list(body_surfaces),
+            )
+            template.create_output_definition(area_def)
+            callback("  Created area output: Body Surface Area")
+        except Exception as exc:
+            callback(f"  Warning: Could not create area output: {exc}")
 
     def run_case(
         self,
@@ -927,14 +940,14 @@ class LuminaryCFDPipeline:
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
-        Calculate total wetted area of the car body surfaces from mesh metadata.
+        Get wetted area from simulation area output.
 
         Parameters
         ----------
         simulation : lc.Simulation
             Completed simulation object
         body_surfaces : List[str]
-            List of body surface names
+            List of body surface names (not used, kept for compatibility)
         callback : Optional[StatusCallback]
             Callback for logging messages
 
@@ -944,62 +957,18 @@ class LuminaryCFDPipeline:
             Total wetted area in m²
         """
         try:
-            # Get mesh from simulation
-            mesh = lc.get_mesh(simulation.mesh_id)
-            metadata = mesh.get_metadata()
+            import pandas as pd
 
-            # Collect surface areas from mesh boundary statistics
-            total_area = 0.0
-            boundaries_found = 0
-            boundaries_with_area = 0
-
-            if callback:
-                callback(f"DEBUG: Looking for {len(body_surfaces)} body surfaces in mesh metadata")
-
-            for zone in metadata.zones:
-                for boundary in zone.boundaries:
-                    # Check if this boundary is in our body surfaces list
-                    if boundary.name in body_surfaces:
-                        boundaries_found += 1
-                        # Try multiple ways to get area
-                        area = None
-
-                        # Try 1: boundary.stats.area
-                        if hasattr(boundary, 'stats') and hasattr(boundary.stats, 'area'):
-                            area = boundary.stats.area
-                        # Try 2: boundary.area
-                        elif hasattr(boundary, 'area'):
-                            area = boundary.area
-                        # Try 3: boundary.stats.surface_area
-                        elif hasattr(boundary, 'stats') and hasattr(boundary.stats, 'surface_area'):
-                            area = boundary.stats.surface_area
-                        # Try 4: Calculate from face count and average face area
-                        elif hasattr(boundary, 'stats') and hasattr(boundary.stats, 'num_faces'):
-                            if callback:
-                                callback(f"DEBUG: {boundary.name} has {boundary.stats.num_faces} faces")
-
-                        if area is not None and area > 0:
-                            total_area += area
-                            boundaries_with_area += 1
-                            if callback:
-                                callback(f"DEBUG: {boundary.name} area = {area:.4f} m²")
-                        else:
-                            if callback:
-                                # Log what attributes the boundary actually has
-                                attrs = [attr for attr in dir(boundary) if not attr.startswith('_')]
-                                if hasattr(boundary, 'stats'):
-                                    stats_attrs = [attr for attr in dir(boundary.stats) if not attr.startswith('_')]
-                                    callback(f"DEBUG: {boundary.name} - stats attributes: {stats_attrs[:10]}")
-                                else:
-                                    callback(f"DEBUG: {boundary.name} - boundary attributes: {attrs[:10]}")
-
-            if callback:
-                callback(f"DEBUG: Found {boundaries_found}/{len(body_surfaces)} surfaces, {boundaries_with_area} with area data")
-
-            return float(total_area)
+            # Download the area output (created during setup as "Body Surface Area")
+            # Area outputs are constant over iterations, so just get the last value
+            with simulation.download_output("Body Surface Area") as stream:
+                df = pd.read_csv(stream, index_col="Iteration index")
+                df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                # Get the last value (area should be constant)
+                wetted_area = df.iloc[-1, 0]
+                return float(wetted_area)
 
         except Exception as exc:
-            # Log the error and return 0
             if callback:
                 callback(f"Warning: Wetted area calculation failed: {exc}")
             return 0.0
