@@ -571,8 +571,12 @@ class LuminaryCFDPipeline:
         cop_results = self._calculate_center_of_pressure(
             simulation,
             body_surfaces=body_surfaces,
-            project=project,
         )
+        # Check for errors in CoP calculation
+        if "cop_error" in cop_results:
+            callback(f"Warning: CoP calculation failed: {cop_results['cop_error']}")
+        else:
+            callback(f"✓ CoP calculated: ({cop_results.get('cop_x', 0):.3f}, {cop_results.get('cop_y', 0):.3f}, {cop_results.get('cop_z', 0):.3f}) m")
         # Merge CoP results into force_results
         force_results.update(cop_results)
 
@@ -920,7 +924,6 @@ class LuminaryCFDPipeline:
     def _calculate_center_of_pressure(
         simulation: lc.Simulation,
         body_surfaces: List[str],
-        project: Optional[lc.Project] = None,
     ) -> Dict[str, Any]:
         """
         Calculate center of pressure for the completed simulation.
@@ -929,6 +932,7 @@ class LuminaryCFDPipeline:
             - cop_x, cop_y, cop_z: Center of pressure coordinates (m)
             - total_force_x, total_force_y, total_force_z: Force components (N)
             - force_magnitude: Total force magnitude (N)
+            - force_dir_x, force_dir_y, force_dir_z: Force direction unit vector
             - moment_x, moment_y, moment_z: Moments about origin (N·m)
         """
         try:
@@ -936,9 +940,15 @@ class LuminaryCFDPipeline:
 
             # Get reference values
             ref_vals = simulation.get_parameters().reference_values
+            sim_params = simulation.get_parameters()
 
-            # Use global_frame_id (body frame for stationary vehicle)
-            frame_id = "global_frame_id"
+            # Try to get body frame ID from motion_data, fall back to global_frame_id
+            frame_id = "global_frame_id"  # Default for stationary body
+            if hasattr(sim_params, 'motion_data') and sim_params.motion_data:
+                for frame in sim_params.motion_data:
+                    if hasattr(frame, 'frame_name') and frame.frame_name == "Body Frame":
+                        frame_id = frame.frame_id
+                        break
 
             # Download force components (average last 10 iterations)
             force_components = []
@@ -1005,8 +1015,23 @@ class LuminaryCFDPipeline:
             }
 
         except Exception as exc:
-            # Return empty dict if CoP calculation fails
-            return {"error": str(exc)}
+            # Return default values if CoP calculation fails, with error message
+            return {
+                "cop_x": 0.0,
+                "cop_y": 0.0,
+                "cop_z": 0.0,
+                "total_force_x": 0.0,
+                "total_force_y": 0.0,
+                "total_force_z": 0.0,
+                "force_magnitude": 0.0,
+                "force_dir_x": 0.0,
+                "force_dir_y": 0.0,
+                "force_dir_z": 0.0,
+                "moment_x": 0.0,
+                "moment_y": 0.0,
+                "moment_z": 0.0,
+                "cop_error": str(exc),
+            }
 
     @staticmethod
     def _fetch_force_results(

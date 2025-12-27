@@ -84,20 +84,27 @@ class SheetsLogger:
         except Exception:
             pass
 
-        # Set up headers
+        # Set up headers - organized with parameters first, then grouped results
         headers = [
+            # Simulation identification and parameters
             "Timestamp",
             "Job Name",
             "Simulation ID",
-            "Force X (N)",
-            "Coefficient X (Cd)",
-            "Force Y (N)",
-            "Coefficient Y",
-            "Force Z (N)",
-            "Coefficient Z",
+            "Wind Speed (m/s)",
+            "Frontal Area (m²)",
             "Wetted Area (m²)",
+            # Drag results grouped together
+            "Drag Force (N)",
+            "Drag Coefficient (Cd)",
             "CdA (Cd × Frontal Area)",
             "CdW (Cd × Wetted Area)",
+            # Side force results
+            "Side Force (N)",
+            "Side Force Coefficient (Cy)",
+            # Lift force results
+            "Lift Force (N)",
+            "Lift Coefficient (Cz)",
+            # Center of pressure and force analysis
             "CoP X (m)",
             "CoP Y (m)",
             "CoP Z (m)",
@@ -105,20 +112,21 @@ class SheetsLogger:
             "Force Direction X",
             "Force Direction Y",
             "Force Direction Z",
+            # Moments
             "Moment X (N·m)",
             "Moment Y (N·m)",
             "Moment Z (N·m)",
+            # Convergence info
             "Convergence Status",
             "Max Iterations",
-            "Wind Speed (m/s)",
-            "Frontal Area (m²)",
+            # Link
             "Luminary Link",
         ]
-        self._sheet.update("A1:AA1", [headers])
+        self._sheet.update("A1:AB1", [headers])
 
         # Format header row
         self._sheet.format(
-            "A1:AA1",
+            "A1:AB1",
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
@@ -166,19 +174,27 @@ class SheetsLogger:
         # Use HYPERLINK formula to make link clickable in Google Sheets
         luminary_link = f'=HYPERLINK("https://app.luminarycloud.com/project/{project_id}/simulation/{simulation_id}", "View Simulation")'
 
+        # Row data matching the reorganized header order
         row_data = [
+            # Simulation identification and parameters
             timestamp,
             job_name,
             simulation_id,
+            wind_speed,
+            frontal_area,
+            force_results.get("wetted_area", "N/A"),
+            # Drag results grouped together
             force_results.get("force_x", "N/A"),
             force_results.get("coeff_x", "N/A"),
-            force_results.get("force_y", "N/A"),
-            force_results.get("coeff_y", "N/A"),
-            force_results.get("force_z", "N/A"),
-            force_results.get("coeff_z", "N/A"),
-            force_results.get("wetted_area", "N/A"),
             force_results.get("cd_a", "N/A"),
             force_results.get("cd_w", "N/A"),
+            # Side force results
+            force_results.get("force_y", "N/A"),
+            force_results.get("coeff_y", "N/A"),
+            # Lift force results
+            force_results.get("force_z", "N/A"),
+            force_results.get("coeff_z", "N/A"),
+            # Center of pressure and force analysis
             force_results.get("cop_x", "N/A"),
             force_results.get("cop_y", "N/A"),
             force_results.get("cop_z", "N/A"),
@@ -186,13 +202,14 @@ class SheetsLogger:
             force_results.get("force_dir_x", "N/A"),
             force_results.get("force_dir_y", "N/A"),
             force_results.get("force_dir_z", "N/A"),
+            # Moments
             force_results.get("moment_x", "N/A"),
             force_results.get("moment_y", "N/A"),
             force_results.get("moment_z", "N/A"),
+            # Convergence info
             convergence_info.get("status", "Unknown"),
             convergence_info.get("iterations", "N/A"),
-            wind_speed,
-            frontal_area,
+            # Link
             luminary_link,
         ]
 
