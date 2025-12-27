@@ -536,12 +536,16 @@ class LuminaryCFDPipeline:
 
         _check_cancellation()
         callback("Launching simulation …")
+        callback(f"DEBUG: mesh_id={mesh.id}, template_id={template.id}")
+        callback(f"DEBUG: project_id={project.id}, simulation_name={case_name}-simulation")
 
         simulation = project.create_simulation(
             mesh.id,
             f"{case_name}-simulation",
             template.id,
         )
+        callback(f"Simulation created with ID: {simulation.id}")
+        callback("Waiting for simulation to complete...")
         status = simulation.wait(interval_seconds=15, print_residuals=False)
         callback(f"Simulation completed with status {status.name}.")
         _check_cancellation()
@@ -1126,14 +1130,14 @@ class LuminaryCFDPipeline:
         """Retrieve workflow log snippets for debugging failed simulations."""
         try:
             workflow_id = simulation._get_workflow_id()
-        except Exception:
-            return None
+        except Exception as exc:
+            return f"Could not get workflow ID: {exc}"
         if not workflow_id:
             return None
         try:
             job = pipelines_api.get_pipeline_job(workflow_id)
-        except Exception:
-            return f"Workflow {workflow_id} exists but details could not be retrieved."
+        except Exception as exc:
+            return f"Workflow {workflow_id} exists but details could not be retrieved: {exc}"
         try:
             logs = job.logs()
         except Exception:
