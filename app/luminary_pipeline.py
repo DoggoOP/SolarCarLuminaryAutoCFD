@@ -327,8 +327,19 @@ class LuminaryCFDPipeline:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
 
-        # Area is a built-in output in Luminary, no need to create custom output definition
-        callback("  Area output is built-in to Luminary")
+        # Create area output for wetted area calculation
+        try:
+            from luminarycloud.outputs import SurfaceAverageOutputDefinition
+            area_def = SurfaceAverageOutputDefinition(
+                name="Body Surface Area",
+                quantity=QuantityType.AREA,
+                surfaces=list(body_surfaces),
+                calc_type=CalculationType.AGGREGATE,
+            )
+            template.create_output_definition(area_def)
+            callback("  Created area output: Body Surface Area")
+        except Exception as exc:
+            callback(f"  Warning: Could not create area output: {exc}")
 
     def run_case(
         self,
@@ -931,16 +942,16 @@ class LuminaryCFDPipeline:
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
-        Get wetted area from Luminary's built-in area output.
+        Get wetted area from area output definition.
 
         Parameters
         ----------
         simulation : lc.Simulation
             Completed simulation object
         template : lc.SimulationTemplate
-            Simulation template (not used, kept for compatibility)
+            Simulation template with output definitions
         body_surfaces : List[str]
-            List of body surface names
+            List of body surface names (not used, kept for compatibility)
         callback : Optional[StatusCallback]
             Callback for logging messages
 
@@ -952,12 +963,26 @@ class LuminaryCFDPipeline:
         try:
             import pandas as pd
 
-            # Download area output for body surfaces using built-in AREA quantity type
-            with simulation.download_surface_output(
-                QuantityType.AREA,
-                body_surfaces,
-                calculation_type=CalculationType.AGGREGATE,
-            ) as stream:
+            # Get the template from the simulation
+            sim_template = simulation.get_template()
+
+            # List all output definitions to find the area output
+            outputs = sim_template.list_output_definitions()
+
+            # Find the Area output by name
+            area_output = None
+            for output in outputs:
+                if hasattr(output, 'name') and 'area' in output.name.lower():
+                    area_output = output
+                    break
+
+            if area_output is None:
+                if callback:
+                    callback("Error: Area output not found in template")
+                return 0.0
+
+            # Download the output data using the output ID
+            with simulation.download_output(area_output.id) as stream:
                 area_df = pd.read_csv(stream, index_col="Iteration index")
 
             # Get the last value (total wetted area)
