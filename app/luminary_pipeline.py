@@ -327,18 +327,8 @@ class LuminaryCFDPipeline:
                 callback(f"  Warning: Could not create force output for {name}: {exc}")
                 # Continue even if one fails
 
-        # Create area output for wetted area
-        try:
-            from luminarycloud.outputs import SurfaceAverageOutputDefinition
-            area_def = SurfaceAverageOutputDefinition(
-                name="Body Surface Area",
-                quantity=QuantityType.AREA,
-                surfaces=list(body_surfaces),
-            )
-            template.create_output_definition(area_def)
-            callback("  Created area output: Body Surface Area")
-        except Exception as exc:
-            callback(f"  Warning: Could not create area output: {exc}")
+        # Area is a built-in output in Luminary, no need to create custom output definition
+        callback("  Area output is built-in to Luminary")
 
     def run_case(
         self,
@@ -629,7 +619,7 @@ class LuminaryCFDPipeline:
 
         # Calculate wetted area
         callback(f"Calculating wetted area using {len(body_surfaces)} body surfaces...")
-        wetted_area = self._calculate_wetted_area(simulation, body_surfaces, callback)
+        wetted_area = self._calculate_wetted_area(simulation, template, body_surfaces, callback)
         force_results["wetted_area"] = wetted_area
         if wetted_area > 0:
             callback(f"✓ Wetted area: {wetted_area:.4f} m²")
@@ -936,18 +926,21 @@ class LuminaryCFDPipeline:
     @staticmethod
     def _calculate_wetted_area(
         simulation: lc.Simulation,
+        template: lc.SimulationTemplate,
         body_surfaces: List[str],
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
-        Get wetted area from simulation area output.
+        Get wetted area from Luminary's built-in area output.
 
         Parameters
         ----------
         simulation : lc.Simulation
             Completed simulation object
+        template : lc.SimulationTemplate
+            Simulation template (not used, kept for compatibility)
         body_surfaces : List[str]
-            List of body surface names (not used, kept for compatibility)
+            List of body surface names
         callback : Optional[StatusCallback]
             Callback for logging messages
 
@@ -959,46 +952,21 @@ class LuminaryCFDPipeline:
         try:
             import pandas as pd
 
-            # List all outputs to find the area output
-            if callback:
-                callback("DEBUG: Listing simulation outputs to find area...")
+            # Download area output for body surfaces using built-in AREA quantity type
+            with simulation.download_surface_output(
+                QuantityType.AREA,
+                body_surfaces,
+                calculation_type=CalculationType.AGGREGATE,
+            ) as stream:
+                area_df = pd.read_csv(stream, index_col="Iteration index")
 
-            # Try to find area output in simulation
-            try:
-                outputs = simulation.list_output_definitions()
-                area_output_id = None
-                for output_def in outputs:
-                    if hasattr(output_def, 'name') and 'area' in output_def.name.lower():
-                        area_output_id = output_def.id
-                        if callback:
-                            callback(f"DEBUG: Found area output: {output_def.name} (ID: {area_output_id})")
-                        break
-
-                if area_output_id is None:
-                    if callback:
-                        output_names = [o.name if hasattr(o, 'name') else str(o) for o in outputs[:5]]
-                        callback(f"DEBUG: Available outputs: {output_names}")
-                    return 0.0
-
-                # Try downloading with the output definition
-                with simulation.download_surface_output(
-                    QuantityType.AREA,
-                    body_surfaces,
-                    calculation_type=CalculationType.AGGREGATE,
-                ) as stream:
-                    df = pd.read_csv(stream, index_col="Iteration index")
-                    df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                    wetted_area = df.iloc[-1, 0]
-                    return float(wetted_area)
-
-            except Exception as list_exc:
-                if callback:
-                    callback(f"DEBUG: Error accessing outputs: {list_exc}")
-                return 0.0
+            # Get the last value (total wetted area)
+            wetted_area = area_df.iloc[-1, -1]
+            return float(wetted_area)
 
         except Exception as exc:
             if callback:
-                callback(f"Warning: Wetted area calculation failed: {exc}")
+                callback(f"Error: Wetted area calculation failed: {exc}")
             return 0.0
 
     @staticmethod
