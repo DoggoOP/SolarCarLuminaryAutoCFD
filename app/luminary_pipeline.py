@@ -385,7 +385,7 @@ class LuminaryCFDPipeline:
             )
         width = max(dims[0] * config.farfield_multiplier, dims[0] + 0.1)
         front = max(dims[1] * 30, dims[1] + 0.1)
-        back = min(dims[1] * -30, - dims[1] -0.1)
+        back = min(dims[1] * -60, - dims[1] -0.1)
         padding = config.farfield_padding
         floor_z = min(bbox_min[2], bbox_max[2]) - 0.001 - padding
         z_height = max(dims[2] * config.farfield_multiplier, dims[2] + 0.05)
@@ -423,9 +423,11 @@ class LuminaryCFDPipeline:
         _check_cancellation()
         callback("Generating mesh with Luminary meshing service …")
 
-        # Configure adaptive boundary layer for body surfaces
+        # Configure adaptive boundary layer
+        # Apply to all surfaces - Luminary will only apply to solid walls (body surfaces)
+        # farfield and symmetry boundaries won't get boundary layers
         boundary_layer = BoundaryLayerParams(
-            surfaces=body_surfaces,
+            surfaces=["*"],  # Wildcard to apply to all applicable surfaces
             n_layers=40,
             initial_size=0.00003484511739,
             growth_rate=1.15,
