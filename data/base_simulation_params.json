@@ -341,6 +341,7 @@
         "turbulence": {
           "turbulenceModel": "KOMEGA_SST",
           "qcrSst": "SST_QCR2000",
+          "transitionModel": "GAMMA_RETHETA_2009",
           "turbulenceModelConstants": "DEFAULT_TURB_CONSTANTS",
           "CSaDes": {
             "value": 0.65

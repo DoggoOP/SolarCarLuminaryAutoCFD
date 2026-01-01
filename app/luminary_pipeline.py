@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import numpy as np
 import luminarycloud as lc
 from luminarycloud.enum import QuantityType, ResidualType, CalculationType
-from luminarycloud.meshing import MeshGenerationParams
+from luminarycloud.meshing import MeshGenerationParams, BoundaryLayerParams
 from luminarycloud.outputs import ForceOutputDefinition, ResidualOutputDefinition
 from luminarycloud.params.geometry import shapes as geom_shapes
 from luminarycloud.pipelines import api as pipelines_api
@@ -43,7 +43,7 @@ class CaseConfig:
     farfield_speed: float
     mesh_min_size: float
     mesh_max_size: float
-    farfield_multiplier: float = 25.0
+    farfield_multiplier: float = 20.0
     farfield_padding: float = 0.0
     farfield_center_override: Optional[Tuple[float, float, float]] = None
     body_surfaces: Optional[Sequence[str]] = None
@@ -384,19 +384,20 @@ class LuminaryCFDPipeline:
                 center[2],
             )
         width = max(dims[0] * config.farfield_multiplier, dims[0] + 0.1)
-        length = max(dims[1] * config.farfield_multiplier, dims[1] + 0.1)
+        front = max(dims[1] * 30, dims[1] + 0.1)
+        back = min(dims[1] * -30, - dims[1] -0.1)
         padding = config.farfield_padding
         floor_z = min(bbox_min[2], bbox_max[2]) - 0.001 - padding
         z_height = max(dims[2] * config.farfield_multiplier, dims[2] + 0.05)
         z_max = floor_z + z_height + padding
         min_corner = (
-            center[0] - width / 2 - padding,
-            center[1] - length / 2 - padding,
+            center[0] - back - padding,
+            center[1] - width / 2 - padding,
             floor_z,
         )
         max_corner = (
-            center[0] + width / 2 + padding,
-            center[1] + length / 2 + padding,
+            center[0] + front + padding,
+            center[1] + width / 2 + padding,
             z_max,
         )
         farfield_bounds = (min_corner, max_corner)
@@ -421,11 +422,21 @@ class LuminaryCFDPipeline:
 
         _check_cancellation()
         callback("Generating mesh with Luminary meshing service …")
+
+        # Configure adaptive boundary layer for body surfaces
+        boundary_layer = BoundaryLayerParams(
+            surfaces=body_surfaces,
+            n_layers=40,
+            initial_size=0.00003484511739,
+            growth_rate=1.15,
+        )
+
         mesh_params = MeshGenerationParams(
             geometry_id=geometry.id,
             min_size=config.mesh_min_size,
             max_size=config.mesh_max_size,
             add_refinement=True,
+            boundary_layer_params=[boundary_layer],
         )
         mesh = project.create_or_get_mesh(mesh_params, name=f"{case_name}-mesh")
         mesh_status = mesh.wait(interval_seconds=10)
