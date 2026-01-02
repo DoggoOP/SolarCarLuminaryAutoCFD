@@ -51,6 +51,11 @@ class CaseConfig:
     farfield_surfaces: Optional[Sequence[str]] = None
     ground_speed: float = 24.59  # Vehicle forward speed for moving floor (m/s)
     frontal_area_override: Optional[float] = None  # Manual frontal area (m²) - overrides calculation
+    rotating_wheels: bool = False
+    wheel_surfaces: Optional[Sequence[str]] = None
+    wheel_rotation_rate: float = 110.2
+    front_wheel_center: Tuple[float, float, float] = (0.0, 0.0, 0.28)
+    rear_wheel_center: Tuple[float, float, float] = (-2.679, 0.0, 0.28)
 
 
 class SimulationTemplateBuilder:
@@ -73,6 +78,12 @@ class SimulationTemplateBuilder:
         sound_speed: float,
         frontal_area: float,
         ground_speed: float = 24.59,
+        rotating_wheels: bool = False,
+        front_wheel_surfaces: Optional[Sequence[str]] = None,
+        rear_wheel_surfaces: Optional[Sequence[str]] = None,
+        wheel_rotation_rate: float = 110.2,
+        front_wheel_center: Tuple[float, float, float] = (0.0, 0.0, 0.28),
+        rear_wheel_center: Tuple[float, float, float] = (-2.679, 0.0, 0.28),
     ) -> dict:
         payload = copy.deepcopy(self._base_payload)
         ref_values = payload.setdefault("referenceValues", {})
@@ -97,9 +108,23 @@ class SimulationTemplateBuilder:
         if wall_template is None or farfield_template is None:
             raise ValueError("Base simulation template is missing wall or farfield boundary data.")
 
+        # Prepare wheel surfaces for boundary conditions
+        all_wheel_surfaces: List[str] = []
+        if rotating_wheels:
+            if front_wheel_surfaces:
+                all_wheel_surfaces.extend(front_wheel_surfaces)
+            if rear_wheel_surfaces:
+                all_wheel_surfaces.extend(rear_wheel_surfaces)
+
+        # Create car body BC, excluding wheel surfaces if wheels are rotating
+        car_body_surfaces = list(body_surfaces)
+        if rotating_wheels and all_wheel_surfaces:
+            # Remove wheel surfaces from body surfaces
+            car_body_surfaces = [s for s in body_surfaces if s not in all_wheel_surfaces]
+
         car_bc = self._build_wall_bc(
             wall_template,
-            list(body_surfaces),
+            car_body_surfaces,
             "car_body_wall",
         )
         floor_bc = self._build_wall_bc(
@@ -115,12 +140,33 @@ class SimulationTemplateBuilder:
         mach = max(farfield_speed / sound_speed, 1e-4)
         farfield_bc.setdefault("farfieldMachNumber", {})["value"] = mach
 
-        physics["boundaryConditionsFluid"] = other_bcs + [car_bc, floor_bc, farfield_bc]
+        # Create wheel BC if rotating wheels enabled
+        if rotating_wheels and all_wheel_surfaces:
+            wheel_bc = self._build_wall_bc(
+                wall_template,
+                all_wheel_surfaces,
+                "rotating_wheels_wall",
+            )
+            physics["boundaryConditionsFluid"] = other_bcs + [car_bc, floor_bc, wheel_bc, farfield_bc]
+        else:
+            physics["boundaryConditionsFluid"] = other_bcs + [car_bc, floor_bc, farfield_bc]
 
         uniform_v = physics.setdefault("initializationFluid", {}).setdefault("uniformV", {})
         _set_vector(uniform_v, farfield_vector)
         # Use motion frame for moving floor (always at constant ground speed, not wind speed)
         self._attach_floor_motion(payload, floor_surfaces, ground_speed)
+
+        # Attach wheel motion frames if rotating wheels enabled
+        if rotating_wheels and (front_wheel_surfaces or rear_wheel_surfaces):
+            self._attach_wheel_motion(
+                payload,
+                front_wheel_surfaces=front_wheel_surfaces or [],
+                rear_wheel_surfaces=rear_wheel_surfaces or [],
+                rotation_rate=wheel_rotation_rate,
+                front_center=front_wheel_center,
+                rear_center=rear_wheel_center,
+            )
+
         self._normalize_physics_metadata(payload)
         amr = payload.setdefault("adaptiveMeshRefinement", {})
         amr["meshingMethod"] = "MESH_METHOD_AUTO"
@@ -214,6 +260,135 @@ class SimulationTemplateBuilder:
         filtered_motion.append(motion_entry)
         payload["motionData"] = filtered_motion
 
+    def _attach_wheel_motion(
+        self,
+        payload: dict,
+        front_wheel_surfaces: Sequence[str],
+        rear_wheel_surfaces: Sequence[str],
+        rotation_rate: float,
+        front_center: Tuple[float, float, float],
+        rear_center: Tuple[float, float, float],
+    ) -> None:
+        """
+        Attach rotating wheel motion frames.
+
+        Parameters
+        ----------
+        payload : dict
+            Simulation payload to modify
+        front_wheel_surfaces : Sequence[str]
+            Surface names for front wheels
+        rear_wheel_surfaces : Sequence[str]
+            Surface names for rear wheels
+        rotation_rate : float
+            Angular velocity in rad/s (around Y-axis)
+        front_center : Tuple[float, float, float]
+            Front wheel rotation center (x, y, z) in global coordinates
+        rear_center : Tuple[float, float, float]
+            Rear wheel rotation center (x, y, z) in global coordinates
+        """
+        current_motion = payload.setdefault("motionData", [])
+
+        # Remove existing wheel frames if present (idempotent)
+        filtered_motion = [
+            entry for entry in current_motion
+            if entry.get("frameId") not in ("front_wheels_frame", "rear_wheels_frame")
+        ]
+
+        zero_vector = {
+            "x": {"value": 0.0},
+            "y": {"value": 0.0},
+            "z": {"value": 0.0},
+        }
+
+        # Create front wheels frame if surfaces provided
+        if front_wheel_surfaces:
+            front_angular_velocity = {
+                "x": {"value": 0.0},
+                "y": {"value": rotation_rate},
+                "z": {"value": 0.0},
+            }
+
+            front_wheel_entry = {
+                "frameId": "front_wheels_frame",
+                "frameName": "Front Wheels",
+                "frameParent": "global_frame_id",
+                "attachedBoundaries": list(front_wheel_surfaces),
+                "motionType": "CONSTANT_ROTATION_MOTION",
+                "motionSpecification": "MOTION_SPECIFICATION_NORMAL",
+                "motionFormulation": "MRF_MOTION_FORMULATION",
+                "motionTranslation": copy.deepcopy(zero_vector),
+                "motionTranslationVelocity": copy.deepcopy(zero_vector),
+                "motionAngularVelocity": front_angular_velocity,
+                "motionRotationAngles": copy.deepcopy(zero_vector),
+                "frameTransforms": [
+                    {
+                        "transformName": "Front Wheels-origin",
+                        "transformType": "TRANSLATIONAL_TRANSFORM",
+                        "transformRotationAngles": copy.deepcopy(zero_vector),
+                        "transformTranslation": {
+                            "x": {"value": front_center[0], "quantityType": "LENGTH"},
+                            "y": {"value": front_center[1], "quantityType": "LENGTH"},
+                            "z": {"value": front_center[2], "quantityType": "LENGTH"},
+                        },
+                    }
+                ],
+                # Provide snake_case aliases for backward compatibility
+                "motion_type": "CONSTANT_ROTATION_MOTION",
+                "motion_specification": "MOTION_SPECIFICATION_NORMAL",
+                "motion_formulation": "MRF_MOTION_FORMULATION",
+                "motion_translation": copy.deepcopy(zero_vector),
+                "motion_translation_velocity": copy.deepcopy(zero_vector),
+                "motion_angular_velocity": front_angular_velocity,
+                "motion_rotation_angles": copy.deepcopy(zero_vector),
+            }
+            filtered_motion.append(front_wheel_entry)
+
+        # Create rear wheels frame if surfaces provided
+        if rear_wheel_surfaces:
+            rear_angular_velocity = {
+                "x": {"value": 0.0},
+                "y": {"value": rotation_rate},
+                "z": {"value": 0.0},
+            }
+
+            rear_wheel_entry = {
+                "frameId": "rear_wheels_frame",
+                "frameName": "Rear Wheels",
+                "frameParent": "global_frame_id",
+                "attachedBoundaries": list(rear_wheel_surfaces),
+                "motionType": "CONSTANT_ROTATION_MOTION",
+                "motionSpecification": "MOTION_SPECIFICATION_NORMAL",
+                "motionFormulation": "MRF_MOTION_FORMULATION",
+                "motionTranslation": copy.deepcopy(zero_vector),
+                "motionTranslationVelocity": copy.deepcopy(zero_vector),
+                "motionAngularVelocity": rear_angular_velocity,
+                "motionRotationAngles": copy.deepcopy(zero_vector),
+                "frameTransforms": [
+                    {
+                        "transformName": "Rear Wheels-origin",
+                        "transformType": "TRANSLATIONAL_TRANSFORM",
+                        "transformRotationAngles": copy.deepcopy(zero_vector),
+                        "transformTranslation": {
+                            "x": {"value": rear_center[0], "quantityType": "LENGTH"},
+                            "y": {"value": rear_center[1], "quantityType": "LENGTH"},
+                            "z": {"value": rear_center[2], "quantityType": "LENGTH"},
+                        },
+                    }
+                ],
+                # Provide snake_case aliases for backward compatibility
+                "motion_type": "CONSTANT_ROTATION_MOTION",
+                "motion_specification": "MOTION_SPECIFICATION_NORMAL",
+                "motion_formulation": "MRF_MOTION_FORMULATION",
+                "motion_translation": copy.deepcopy(zero_vector),
+                "motion_translation_velocity": copy.deepcopy(zero_vector),
+                "motion_angular_velocity": rear_angular_velocity,
+                "motion_rotation_angles": copy.deepcopy(zero_vector),
+            }
+            filtered_motion.append(rear_wheel_entry)
+
+        payload["motionData"] = filtered_motion
+
     @staticmethod
     def _normalize_physics_metadata(payload: dict) -> None:
         """Ensure physics identifiers match the expected Fluid Flow 1 naming."""
@@ -262,7 +437,7 @@ class LuminaryCFDPipeline:
 
         # Set general stopping conditions
         template.update_general_stopping_conditions(
-            max_iterations=7500,
+            max_iterations=10000,
             stop_on_any=True,
         )
 
@@ -504,7 +679,38 @@ class LuminaryCFDPipeline:
                 "Please specify them explicitly in the request."
             )
 
+        # Detect wheel surfaces if rotating wheels enabled
+        front_wheel_surfaces: List[str] = []
+        rear_wheel_surfaces: List[str] = []
+
+        if config.rotating_wheels:
+            callback("Rotating wheels enabled - detecting wheel surfaces...")
+
+            wheel_surfaces = list(
+                config.wheel_surfaces
+                or self._infer_wheel_surfaces_by_z(
+                    surface_map,
+                    floor_z,
+                    exclude=floor_surfaces + farfield_surfaces,
+                    z_min=0.0,
+                    z_max=0.065,
+                )
+            )
+
+            if wheel_surfaces:
+                callback(f"Detected {len(wheel_surfaces)} wheel surfaces: {wheel_surfaces}")
+                front_wheel_surfaces, rear_wheel_surfaces = self._categorize_wheels_by_x(
+                    surface_map, wheel_surfaces
+                )
+                callback(f"Front wheels: {front_wheel_surfaces}, Rear: {rear_wheel_surfaces}")
+            else:
+                callback("Warning: No wheel surfaces detected")
+
+        # Exclude wheels from body surfaces if rotating wheels enabled
         remaining_exclude = farfield_surfaces + floor_surfaces
+        if config.rotating_wheels and (front_wheel_surfaces or rear_wheel_surfaces):
+            remaining_exclude = remaining_exclude + front_wheel_surfaces + rear_wheel_surfaces
+
         body_surfaces = list(
             config.body_surfaces
             or self._infer_surfaces(
@@ -544,6 +750,12 @@ class LuminaryCFDPipeline:
             sound_speed=self._settings.sound_speed,
             frontal_area=frontal_area,
             ground_speed=config.ground_speed,
+            rotating_wheels=config.rotating_wheels,
+            front_wheel_surfaces=front_wheel_surfaces,
+            rear_wheel_surfaces=rear_wheel_surfaces,
+            wheel_rotation_rate=config.wheel_rotation_rate,
+            front_wheel_center=config.front_wheel_center,
+            rear_wheel_center=config.rear_wheel_center,
         )
         tmp_params = self._template_builder.dump_payload(payload, label=case_name)
         try:
@@ -809,6 +1021,121 @@ class LuminaryCFDPipeline:
             if hits:
                 candidates.append(name)
         return candidates
+
+    @staticmethod
+    def _infer_wheel_surfaces_by_z(
+        surface_map: Dict[str, Any],
+        floor_z: float,
+        exclude: Optional[Sequence[str]] = None,
+        z_min: float = 0.0,
+        z_max: float = 0.065,
+    ) -> List[str]:
+        """
+        Identify surfaces with Z-coordinates in the wheel contact zone.
+
+        Parameters
+        ----------
+        surface_map : Dict[str, Any]
+            Mapping of surface names to boundary metadata
+        floor_z : float
+            Z-coordinate of the floor (typically -0.01m)
+        exclude : Optional[Sequence[str]]
+            Surface names to exclude (e.g., floor, farfield)
+        z_min : float
+            Minimum Z-coordinate for wheel detection (default: 0.0)
+        z_max : float
+            Maximum Z-coordinate for wheel detection (default: 0.065)
+
+        Returns
+        -------
+        List[str]
+            Sorted list of wheel surface names
+        """
+        exclude_lower = {name.lower() for name in (exclude or [])}
+        candidates: List[str] = []
+
+        for name, boundary in surface_map.items():
+            # Skip excluded surfaces
+            if name.lower() in exclude_lower:
+                continue
+
+            stats = getattr(boundary, "stats", None)
+            if not stats:
+                continue
+
+            min_coord = getattr(stats, "min_coord", None)
+            max_coord = getattr(stats, "max_coord", None)
+            if not min_coord or not max_coord:
+                continue
+
+            min_z = getattr(min_coord, "z", None)
+            max_z = getattr(max_coord, "z", None)
+            if min_z is None or max_z is None:
+                continue
+
+            # Check if surface overlaps the wheel zone [z_min, z_max]
+            touches_wheel_zone = (min_z <= z_max) and (max_z >= z_min)
+
+            if touches_wheel_zone:
+                candidates.append(name)
+
+        return sorted(candidates)
+
+    @staticmethod
+    def _categorize_wheels_by_x(
+        surface_map: Dict[str, Any],
+        wheel_surfaces: Sequence[str],
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Categorize wheel surfaces into front and rear based on X-coordinate.
+
+        Parameters
+        ----------
+        surface_map : Dict[str, Any]
+            Mapping of surface names to boundary metadata
+        wheel_surfaces : Sequence[str]
+            List of wheel surface names to categorize
+
+        Returns
+        -------
+        Tuple[List[str], List[str]]
+            Tuple of (front_wheels, rear_wheels) surface name lists
+        """
+        if not wheel_surfaces:
+            return [], []
+
+        # Calculate centroid X for each wheel surface
+        wheel_centroids: List[Tuple[str, float]] = []
+        for name in wheel_surfaces:
+            boundary = surface_map.get(name)
+            if not boundary:
+                continue
+
+            stats = getattr(boundary, "stats", None)
+            if not stats:
+                continue
+
+            min_coord = getattr(stats, "min_coord", None)
+            max_coord = getattr(stats, "max_coord", None)
+            if not min_coord or not max_coord:
+                continue
+
+            # Calculate centroid X coordinate
+            centroid_x = (getattr(min_coord, "x", 0) + getattr(max_coord, "x", 0)) / 2
+            wheel_centroids.append((name, centroid_x))
+
+        if not wheel_centroids:
+            return [], []
+
+        # Sort by X-coordinate (ascending: rear to front)
+        wheel_centroids.sort(key=lambda item: item[1])
+
+        # Split at midpoint: lower 50% = rear, upper 50% = front
+        split_idx = len(wheel_centroids) // 2
+        rear_wheels = [name for name, _ in wheel_centroids[:split_idx]]
+        front_wheels = [name for name, _ in wheel_centroids[split_idx:]]
+
+        return front_wheels, rear_wheels
 
     @staticmethod
     def _geometry_bounds(

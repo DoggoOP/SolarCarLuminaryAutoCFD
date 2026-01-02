@@ -162,6 +162,18 @@
         <small>Specify exact value from CAD for accurate coefficients.</small>
       </div>
       <div class="full">
+        <label for="rotating_wheels">
+          <input id="rotating_wheels" name="rotating_wheels" type="checkbox" style="width:auto; margin-right: 0.5rem;" />
+          Rotating Wheels
+        </label>
+        <small>Enable rotating wheel motion frames (110.2 rad/s around Y-axis)</small>
+      </div>
+      <div class="full" id="wheel_surfaces_container" style="display: none;">
+        <label for="wheel_surfaces">Wheel surface names (comma separated, optional)</label>
+        <input id="wheel_surfaces" name="wheel_surfaces" placeholder="Auto-detect surfaces touching z=0 to z=0.065m" />
+        <small>Override auto-detection. Surfaces split into front/back by X-coordinate.</small>
+      </div>
+      <div class="full">
         <label for="body_surfaces">Body surface names (comma separated, optional)</label>
         <input id="body_surfaces" name="body_surfaces" placeholder="0/bound/car_body" />
       </div>
@@ -323,6 +335,12 @@
       }
 
       setInterval(refreshJobs, 10000);
+
+      // Toggle wheel surfaces input visibility based on rotating wheels checkbox
+      document.getElementById("rotating_wheels").addEventListener("change", (event) => {
+        const container = document.getElementById("wheel_surfaces_container");
+        container.style.display = event.target.checked ? "block" : "none";
+      });
     </script>
   </body>
 </html>

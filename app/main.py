@@ -110,6 +110,8 @@ async def run_case(
     body_surfaces: str = Form(""),
     floor_surfaces: str = Form(""),
     farfield_surfaces: str = Form(""),
+    rotating_wheels: bool = Form(False),
+    wheel_surfaces: str = Form(""),
 ) -> JSONResponse:
     global _last_submission_time  # noqa: PLW0603
     now = time.monotonic()
@@ -128,6 +130,7 @@ async def run_case(
     body_surface_list = _parse_surfaces(body_surfaces)
     floor_surface_list = _parse_surfaces(floor_surfaces)
     farfield_surface_list = _parse_surfaces(farfield_surfaces)
+    wheel_surface_list = _parse_surfaces(wheel_surfaces)
     padding_raw = _parse_optional_float(farfield_padding)
     farfield_padding_value = 0.0 if padding_raw is None else padding_raw
     frontal_area_override = _parse_optional_float(frontal_area)
@@ -156,6 +159,8 @@ async def run_case(
         body_surfaces=body_surface_list or None,
         floor_surfaces=floor_surface_list or None,
         farfield_surfaces=farfield_surface_list or None,
+        rotating_wheels=rotating_wheels,
+        wheel_surfaces=wheel_surface_list or None,
     )
 
     def _log(message: str) -> None:
