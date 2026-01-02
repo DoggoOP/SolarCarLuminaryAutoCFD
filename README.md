@@ -9,6 +9,7 @@ A fully automated CFD pipeline for solar car aerodynamics testing. Upload a CAD 
 - **📊 Google Sheets Logging** - Automatic results tracking with drag, lift, side force, and coefficients
 - **🔄 Backfill Support** - Import historical simulation data into spreadsheets
 - **⚙️ Smart Automation** - Automatic frontal area calculation, force outputs, and convergence monitoring
+- **🔄 Rotating Wheels** - Optional rotating wheel simulation with auto-detection and customizable parameters
 - **🚢 Deploy Ready** - Containerized and configured for Railway, Render, or Google Cloud Run
 
 ---
@@ -42,8 +43,10 @@ The pipeline automates the complete CFD workflow:
    - **Velocity**: User-specified wind speed (default 24.59 m/s)
 5. **Generate Mesh** - Creates volume mesh with adaptive refinement (target: 10M cells)
 6. **Setup Simulation**:
-   - RANS turbulence (k-omega SST)
-   - Moving floor boundary condition
+   - RANS turbulence (k-omega SST with γ-Reθ transition model)
+   - Adaptive boundary layer (40 layers, 1.15 growth rate)
+   - Moving floor boundary condition (constant ground speed)
+   - Optional rotating wheels (auto-detected, 110.2 rad/s)
    - Stopping conditions: 7500 iterations or convergence
    - Force outputs: Drag, Lift, Side Force on body surfaces
 7. **Run Simulation** - Launches and monitors CFD solve
@@ -289,6 +292,7 @@ curl -F cad_file=@solar_car.step \
      -F mesh_min_size=0.002 \
      -F mesh_max_size=0.05 \
      -F farfield_multiplier=25.0 \
+     -F rotating_wheels=true \
      http://localhost:8000/run
 ```
 
@@ -434,6 +438,51 @@ curl -F cad_file=@car.step \
 
 # Wind from behind
 -F wind_direction="-1,0,0"
+```
+
+### Rotating Wheels Configuration
+
+Enable rotating wheel simulation with automatic surface detection:
+
+```bash
+# Enable rotating wheels (auto-detect)
+-F rotating_wheels=true
+```
+
+**How Auto-Detection Works:**
+- Detects surfaces in the wheel contact zone (z ∈ [0.0, 0.065] meters)
+- Floor is at z = -0.01m (bbox minimum - 0.001m)
+- Categorizes wheels into front/rear based on X-coordinate
+- Front wheels: higher X values (more positive)
+- Rear wheels: lower X values (closer to rear)
+
+**Manual Surface Override:**
+
+Specify exact wheel surface names if auto-detection fails:
+
+```bash
+-F rotating_wheels=true \
+-F wheel_surfaces="0/bound/BC_5,0/bound/BC_6,0/bound/BC_7,0/bound/BC_8"
+```
+
+**Wheel Motion Parameters:**
+- **Rotation Rate**: 110.2 rad/s around Y-axis (lateral rotation)
+- **Front Wheel Center**: (x=0, y=0, z=0.28) in global coordinates
+- **Rear Wheel Center**: (x=-2.679, y=0, z=0.28) in global coordinates
+- **Motion Formulation**: MRF (Moving Reference Frame) for steady-state
+- **Boundary Condition**: NO_SLIP on wheel surfaces
+
+**What Happens:**
+1. Wheel surfaces are automatically detected or use manual override
+2. Two rotating motion frames are created (front_wheels_frame, rear_wheels_frame)
+3. Wheels get separate boundary condition (excluded from car body BC)
+4. Simulation includes wheel rotation effects on aerodynamics
+
+**Example Log Output:**
+```
+Rotating wheels enabled - detecting wheel surfaces...
+Detected 4 wheel surfaces: ['0/bound/BC_5', '0/bound/BC_6', '0/bound/BC_7', '0/bound/BC_8']
+Front wheels: ['0/bound/BC_5', '0/bound/BC_6'], Rear: ['0/bound/BC_7', '0/bound/BC_8']
 ```
 
 ---
