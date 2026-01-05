@@ -314,7 +314,7 @@ class SimulationTemplateBuilder:
                 "frameName": "Front Wheels",
                 "frameParent": "global_frame_id",
                 "attachedBoundaries": list(front_wheel_surfaces),
-                "motionType": "CONSTANT_ROTATION_MOTION",
+                "motionType": "CONSTANT_ANGULAR_MOTION",
                 "motionSpecification": "MOTION_SPECIFICATION_NORMAL",
                 "motionFormulation": "MRF_MOTION_FORMULATION",
                 "motionTranslation": copy.deepcopy(zero_vector),
@@ -334,7 +334,7 @@ class SimulationTemplateBuilder:
                     }
                 ],
                 # Provide snake_case aliases for backward compatibility
-                "motion_type": "CONSTANT_ROTATION_MOTION",
+                "motion_type": "CONSTANT_ANGULAR_MOTION",
                 "motion_specification": "MOTION_SPECIFICATION_NORMAL",
                 "motion_formulation": "MRF_MOTION_FORMULATION",
                 "motion_translation": copy.deepcopy(zero_vector),
@@ -357,7 +357,7 @@ class SimulationTemplateBuilder:
                 "frameName": "Rear Wheels",
                 "frameParent": "global_frame_id",
                 "attachedBoundaries": list(rear_wheel_surfaces),
-                "motionType": "CONSTANT_ROTATION_MOTION",
+                "motionType": "CONSTANT_ANGULAR_MOTION",
                 "motionSpecification": "MOTION_SPECIFICATION_NORMAL",
                 "motionFormulation": "MRF_MOTION_FORMULATION",
                 "motionTranslation": copy.deepcopy(zero_vector),
@@ -377,7 +377,7 @@ class SimulationTemplateBuilder:
                     }
                 ],
                 # Provide snake_case aliases for backward compatibility
-                "motion_type": "CONSTANT_ROTATION_MOTION",
+                "motion_type": "CONSTANT_ANGULAR_MOTION",
                 "motion_specification": "MOTION_SPECIFICATION_NORMAL",
                 "motion_formulation": "MRF_MOTION_FORMULATION",
                 "motion_translation": copy.deepcopy(zero_vector),
