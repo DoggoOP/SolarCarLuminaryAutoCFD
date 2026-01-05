@@ -1085,9 +1085,12 @@ class LuminaryCFDPipeline:
     def _categorize_wheels_by_x(
         surface_map: Dict[str, Any],
         wheel_surfaces: Sequence[str],
+        x_threshold: float = -1.0,
     ) -> Tuple[List[str], List[str]]:
         """
-        Categorize wheel surfaces into front and rear based on X-coordinate.
+        Categorize wheel surfaces into front and rear based on X-coordinate threshold.
+
+        Surfaces with X < x_threshold are rear wheels, otherwise front wheels.
 
         Parameters
         ----------
@@ -1095,6 +1098,9 @@ class LuminaryCFDPipeline:
             Mapping of surface names to boundary metadata
         wheel_surfaces : Sequence[str]
             List of wheel surface names to categorize
+        x_threshold : float
+            X-coordinate threshold for front/rear split (default: -1.0m)
+            Surfaces with X < threshold are rear wheels
 
         Returns
         -------
@@ -1104,8 +1110,9 @@ class LuminaryCFDPipeline:
         if not wheel_surfaces:
             return [], []
 
-        # Calculate centroid X for each wheel surface
-        wheel_centroids: List[Tuple[str, float]] = []
+        front_wheels: List[str] = []
+        rear_wheels: List[str] = []
+
         for name in wheel_surfaces:
             boundary = surface_map.get(name)
             if not boundary:
@@ -1122,18 +1129,12 @@ class LuminaryCFDPipeline:
 
             # Calculate centroid X coordinate
             centroid_x = (getattr(min_coord, "x", 0) + getattr(max_coord, "x", 0)) / 2
-            wheel_centroids.append((name, centroid_x))
 
-        if not wheel_centroids:
-            return [], []
-
-        # Sort by X-coordinate (ascending: rear to front)
-        wheel_centroids.sort(key=lambda item: item[1])
-
-        # Split at midpoint: lower 50% = rear, upper 50% = front
-        split_idx = len(wheel_centroids) // 2
-        rear_wheels = [name for name, _ in wheel_centroids[:split_idx]]
-        front_wheels = [name for name, _ in wheel_centroids[split_idx:]]
+            # Categorize based on threshold
+            if centroid_x < x_threshold:
+                rear_wheels.append(name)
+            else:
+                front_wheels.append(name)
 
         return front_wheels, rear_wheels
 
