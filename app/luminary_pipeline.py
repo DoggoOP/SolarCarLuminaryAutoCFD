@@ -864,6 +864,7 @@ class LuminaryCFDPipeline:
             ref_velocity=config.farfield_speed,
             project=project,
             body_surfaces=body_surfaces,
+            callback=callback,
         )
 
         # Calculate center of pressure
@@ -1331,11 +1332,9 @@ class LuminaryCFDPipeline:
         try:
             import pandas as pd
 
-            # Get the template from the simulation
-            sim_template = simulation.get_template()
-
+            # Use the template that was passed in (already have it)
             # List all output definitions to find the area output
-            outputs = sim_template.list_output_definitions()
+            outputs = template.list_output_definitions()
 
             # Find the Area output by name
             area_output = None
@@ -1477,13 +1476,19 @@ class LuminaryCFDPipeline:
         ref_density: float = 1.225,
         project: Optional[lc.Project] = None,
         body_surfaces: Optional[List[str]] = None,
+        callback: Optional[StatusCallback] = None,
     ) -> Dict[str, float]:
         """Fetch force output values and calculate coefficients."""
         results = {}
 
+        def _log(msg: str) -> None:
+            if callback:
+                callback(msg)
+
         try:
             import io
             import csv
+            import pandas as pd
             from luminarycloud.enum import QuantityType, CalculationType
 
             if not project:
@@ -1541,8 +1546,10 @@ class LuminaryCFDPipeline:
                         avg_force = df.tail(50).iloc[:, 0].mean()
                         results[result_key] = float(avg_force)
                 except Exception as e:
-                    # If this force type fails, continue with others
+                    # If this force type fails, log error and continue with others
+                    _log(f"Warning: Failed to fetch {result_key}: {e}")
                     results[result_key] = 0.0
+                    results[f"{result_key}_error"] = str(e)
 
             # Calculate force coefficients: C = F / (0.5 * rho * V^2 * A)
             q_inf = 0.5 * ref_density * ref_velocity ** 2 * ref_area
