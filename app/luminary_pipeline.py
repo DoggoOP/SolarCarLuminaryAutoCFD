@@ -431,13 +431,21 @@ class LuminaryCFDPipeline:
         physics_id: str,
         body_surfaces: Sequence[str],
         callback: StatusCallback,
-    ) -> None:
-        """Configure convergence criteria and force outputs via API after template creation."""
+    ) -> int:
+        """
+        Configure convergence criteria and force outputs via API after template creation.
+
+        Returns
+        -------
+        int
+            Maximum number of iterations configured
+        """
         callback("Setting up stopping conditions and force outputs...")
 
         # Set general stopping conditions
+        max_iterations = 10000
         template.update_general_stopping_conditions(
-            max_iterations=10000,
+            max_iterations=max_iterations,
             stop_on_any=True,
         )
 
@@ -483,6 +491,8 @@ class LuminaryCFDPipeline:
         callback("Creating force and area output definitions...")
         force_outputs = [
             ("Drag (Fx)", QuantityType.DRAG),
+            ("Viscous Drag", QuantityType.VISCOUS_DRAG),
+            ("Pressure Drag", QuantityType.PRESSURE_DRAG),
             ("Side Force (Fy)", QuantityType.SIDEFORCE),
             ("Lift (Fz)", QuantityType.LIFT),
         ]
@@ -515,6 +525,8 @@ class LuminaryCFDPipeline:
             callback("  Created area output: Body Surface Area")
         except Exception as exc:
             callback(f"  Warning: Could not create area output: {exc}")
+
+        return max_iterations
 
     def run_case(
         self,
@@ -769,9 +781,24 @@ class LuminaryCFDPipeline:
             # tmp_params.unlink(missing_ok=True)
         callback(f"Created simulation template {template.id}.")
 
+        # Get physics_id from the template parameters (don't hardcode it)
+        try:
+            template_params = template.get_parameters()
+            physics_list = getattr(template_params, 'physics', None) or []
+            if physics_list and len(physics_list) > 0:
+                physics_id = physics_list[0].physics_identifier.id
+                callback(f"DEBUG: Using physics_id from template: {physics_id}")
+            else:
+                # Fallback to default if not found
+                physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
+                callback(f"DEBUG: Using default physics_id: {physics_id}")
+        except Exception as exc:
+            # Fallback to default if extraction fails
+            physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
+            callback(f"DEBUG: Failed to extract physics_id ({exc}), using default: {physics_id}")
+
         # Set up stopping conditions and force outputs via API
-        physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
-        self._setup_stopping_conditions(template, physics_id, body_surfaces, callback)
+        max_iterations = self._setup_stopping_conditions(template, physics_id, body_surfaces, callback)
 
         _check_cancellation()
         callback("Launching simulation …")
@@ -873,7 +900,7 @@ class LuminaryCFDPipeline:
                 callback("Logging results to Google Sheets...")
                 convergence_info = {
                     "status": status.name,
-                    "iterations": 7500,  # Max iterations from stopping conditions
+                    "iterations": max_iterations,
                 }
                 self._sheets_logger.append_result(
                     job_name=case_name,
@@ -1326,8 +1353,8 @@ class LuminaryCFDPipeline:
             with simulation.download_output(area_output.id) as stream:
                 area_df = pd.read_csv(stream, index_col="Iteration index")
 
-            # Get the last value (total wetted area)
-            wetted_area = area_df.iloc[-1, -1]
+            # Average the last 50 iterations (total wetted area)
+            wetted_area = area_df.tail(50).iloc[:, -1].mean()
             return float(wetted_area)
 
         except Exception as exc:
@@ -1359,7 +1386,7 @@ class LuminaryCFDPipeline:
             # Use global frame for CoP calculation (not body frame which may be rotated)
             frame_id = "global_frame_id"
 
-            # Download force components (average last 10 iterations)
+            # Download force components (average last 50 iterations)
             force_components = []
             for direction in [Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)]:
                 with simulation.download_surface_output(
@@ -1372,7 +1399,7 @@ class LuminaryCFDPipeline:
                 ) as stream:
                     df = pd.read_csv(stream, index_col="Iteration index")
                     df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                    avg_force = df.tail(10).iloc[:, 0].mean()
+                    avg_force = df.tail(50).iloc[:, 0].mean()
                     force_components.append(avg_force)
 
             total_force = np.array(force_components)
@@ -1392,7 +1419,7 @@ class LuminaryCFDPipeline:
                 ) as stream:
                     df = pd.read_csv(stream, index_col="Iteration index")
                     df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                    avg_moment = df.tail(10).iloc[:, 0].mean()
+                    avg_moment = df.tail(50).iloc[:, 0].mean()
                     moment_components.append(avg_moment)
 
             total_moment = np.array(moment_components)
@@ -1491,9 +1518,11 @@ class LuminaryCFDPipeline:
             # Download force outputs
             # In global frame: DRAG=Fx (along x), SIDEFORCE=Fy (along y), LIFT=Fz (along z)
             force_types = [
-                (QuantityType.DRAG, "force_x"),        # Drag is force along x-axis
-                (QuantityType.SIDEFORCE, "force_y"),   # Side force is force along y-axis
-                (QuantityType.LIFT, "force_z"),        # Lift is force along z-axis
+                (QuantityType.DRAG, "force_x"),              # Total drag (x-axis)
+                (QuantityType.VISCOUS_DRAG, "viscous_drag"), # Viscous drag component
+                (QuantityType.PRESSURE_DRAG, "pressure_drag"), # Pressure drag component
+                (QuantityType.SIDEFORCE, "force_y"),         # Side force (y-axis)
+                (QuantityType.LIFT, "force_z"),              # Lift (z-axis)
             ]
 
             for quantity_type, result_key in force_types:
@@ -1505,15 +1534,12 @@ class LuminaryCFDPipeline:
                         frame_id="global_frame_id"
                     ) as dl:
                         content = dl.read()
-                        # Parse CSV and get last value
-                        reader = csv.DictReader(io.StringIO(content))
-                        last_row = None
-                        for row in reader:
-                            last_row = row
-                        if last_row:
-                            # Get the force column name (should be the last column)
-                            force_col = list(last_row.keys())[-1]
-                            results[result_key] = float(last_row[force_col])
+                        # Parse CSV and average last 50 iterations
+                        df = pd.read_csv(io.StringIO(content), index_col="Iteration index")
+                        df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
+                        # Average the last 50 iterations
+                        avg_force = df.tail(50).iloc[:, 0].mean()
+                        results[result_key] = float(avg_force)
                 except Exception as e:
                     # If this force type fails, continue with others
                     results[result_key] = 0.0

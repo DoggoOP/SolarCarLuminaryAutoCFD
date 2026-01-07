@@ -98,6 +98,8 @@ class SheetsLogger:
             "Wetted Area (m²)",
             # Drag results grouped together
             "Drag Force (N)",
+            "Viscous Drag (N)",
+            "Pressure Drag (N)",
             "Drag Coefficient (Cd)",
             "CdA (Cd × Frontal Area)",
             "CdW (Cd × Wetted Area)",
@@ -125,11 +127,11 @@ class SheetsLogger:
             # Link
             "Luminary Link",
         ]
-        self._sheet.update("A1:AE1", [headers])
+        self._sheet.update("A1:AG1", [headers])
 
         # Format header row
         self._sheet.format(
-            "A1:AE1",
+            "A1:AG1",
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
@@ -194,6 +196,8 @@ class SheetsLogger:
             force_results.get("wetted_area", "N/A"),
             # Drag results grouped together
             force_results.get("force_x", "N/A"),
+            force_results.get("viscous_drag", "N/A"),
+            force_results.get("pressure_drag", "N/A"),
             force_results.get("coeff_x", "N/A"),
             force_results.get("cd_a", "N/A"),
             force_results.get("cd_w", "N/A"),
