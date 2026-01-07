@@ -489,10 +489,10 @@ class LuminaryCFDPipeline:
         # SIDEFORCE = force along y-axis (lateral)
         # LIFT = force along z-axis (upward = positive lift)
         callback("Creating force and area output definitions...")
+        # NOTE: Only create output definitions for main force components
+        # Viscous/pressure drag are derived and downloaded directly without definitions
         force_outputs = [
             ("Drag (Fx)", QuantityType.DRAG),
-            ("Viscous Drag", QuantityType.VISCOUS_DRAG),
-            ("Pressure Drag", QuantityType.PRESSURE_DRAG),
             ("Side Force (Fy)", QuantityType.SIDEFORCE),
             ("Lift (Fz)", QuantityType.LIFT),
         ]
@@ -506,10 +506,10 @@ class LuminaryCFDPipeline:
                     # Use global frame (which is the body frame for stationary vehicle)
                     reference_frame_id="global_frame_id",
                 )
-                template.create_output_definition(force_def)
-                callback(f"  Created force output: {name}")
+                created_def = template.create_output_definition(force_def)
+                callback(f"  ✓ Created force output: {name} (ID: {created_def.id})")
             except Exception as exc:
-                callback(f"  Warning: Could not create force output for {name}: {exc}")
+                callback(f"  ✗ ERROR creating force output for {name}: {exc}")
                 # Continue even if one fails
 
         # Create area output for wetted area calculation
@@ -1522,12 +1522,13 @@ class LuminaryCFDPipeline:
 
             # Download force outputs
             # In global frame: DRAG=Fx (along x), SIDEFORCE=Fy (along y), LIFT=Fz (along z)
+            # Note: Try main forces first, then viscous/pressure components
             force_types = [
-                (QuantityType.DRAG, "force_x"),              # Total drag (x-axis)
+                (QuantityType.DRAG, "force_x"),              # Total drag (x-axis) - CRITICAL
+                (QuantityType.SIDEFORCE, "force_y"),         # Side force (y-axis) - CRITICAL
+                (QuantityType.LIFT, "force_z"),              # Lift (z-axis) - CRITICAL
                 (QuantityType.VISCOUS_DRAG, "viscous_drag"), # Viscous drag component
                 (QuantityType.PRESSURE_DRAG, "pressure_drag"), # Pressure drag component
-                (QuantityType.SIDEFORCE, "force_y"),         # Side force (y-axis)
-                (QuantityType.LIFT, "force_z"),              # Lift (z-axis)
             ]
 
             for quantity_type, result_key in force_types:
