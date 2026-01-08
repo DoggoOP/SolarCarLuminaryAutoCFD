@@ -105,6 +105,13 @@
   <body>
     <h1>Solar Car AutoCFD</h1>
     <p>Upload a CAD file and the pipeline will push it through Luminary Cloud automatically.</p>
+    {% if sheets_url %}
+    <p style="margin-top: 0.5rem;">
+      <a href="{{ sheets_url }}" target="_blank" style="color:#4338ca; font-weight:600; font-size: 1rem;">
+        📊 View Results Spreadsheet →
+      </a>
+    </p>
+    {% endif %}
 
     <form id="upload-form" enctype="multipart/form-data">
       <div class="full">
@@ -230,6 +237,7 @@
       const form = document.getElementById("upload-form");
       const resultBox = document.getElementById("result");
       const jobsBox = document.getElementById("jobs");
+      const sheetsUrl = {{ sheets_url|tojson if sheets_url else 'null' }};
 
       let latestJobId = null;
 
@@ -317,7 +325,14 @@
                      </p>
                      <p style="font-size:0.85rem;color:#64748b;">
                        Simulation ID: ${job.result.simulation_id}
-                     </p>`
+                     </p>
+                     ${sheetsUrl ? `<p>
+                       <a href="${sheetsUrl}"
+                          target="_blank"
+                          style="color:#059669;font-weight:600;">
+                         📊 View in Results Spreadsheet →
+                       </a>
+                     </p>` : ''}`
                   : ""
               }
               ${

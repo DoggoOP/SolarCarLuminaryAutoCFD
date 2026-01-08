@@ -58,6 +58,12 @@ def _parse_optional_float(raw: str) -> Optional[float]:
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
     jobs = job_store.list_jobs()
+
+    # Construct Google Sheets URL if spreadsheet ID is configured
+    sheets_url = None
+    if settings.google_sheets_spreadsheet_id:
+        sheets_url = f"https://docs.google.com/spreadsheets/d/{settings.google_sheets_spreadsheet_id}/edit"
+
     return templates.TemplateResponse(
         "index.html",
         {
@@ -65,6 +71,7 @@ async def home(request: Request) -> HTMLResponse:
             "jobs": jobs,
             "default_speed": settings.default_farfield_speed,
             "default_project": settings.luminary_project_name,
+            "sheets_url": sheets_url,
         },
     )
 
