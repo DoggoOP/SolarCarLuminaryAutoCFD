@@ -443,7 +443,7 @@ class LuminaryCFDPipeline:
         callback("Setting up stopping conditions and force outputs...")
 
         # Set general stopping conditions
-        max_iterations = 10000
+        max_iterations = 12500
         template.update_general_stopping_conditions(
             max_iterations=max_iterations,
             stop_on_any=True,
