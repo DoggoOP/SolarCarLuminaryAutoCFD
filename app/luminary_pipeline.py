@@ -484,15 +484,17 @@ class LuminaryCFDPipeline:
                 # Continue with other residuals even if one fails
 
         # Create force output definitions
-        # Use TOTAL_FORCE with force_direction to specify exact direction in global coordinates:
-        # Drag = force in -x direction (flow from +x, drag opposes it)
+        # Use force_direction to specify exact direction in global coordinates:
+        # Drag = total force in -x direction (flow from +x, drag opposes it)
+        # Viscous drag = viscous force in -x direction
+        # Pressure drag = pressure force in -x direction
         # Sideforce = force in y direction (lateral)
         # Lift = force in z direction (upward)
         callback("Creating force and area output definitions...")
-        # NOTE: Only create output definitions for main force components
-        # Viscous/pressure drag are derived and downloaded directly without definitions
         force_outputs = [
-            ("Drag (Fx)", QuantityType.TOTAL_FORCE, Vector3(-1, 0, 0)),  # Force in -x direction
+            ("Drag (Fx)", QuantityType.TOTAL_FORCE, Vector3(-1, 0, 0)),  # Total force in -x direction
+            ("Viscous Drag", QuantityType.VISCOUS_DRAG, Vector3(-1, 0, 0)),  # Viscous force in -x direction
+            ("Pressure Drag", QuantityType.PRESSURE_DRAG, Vector3(-1, 0, 0)),  # Pressure force in -x direction
             ("Side Force (Fy)", QuantityType.TOTAL_FORCE, Vector3(0, 1, 0)),  # Force in y direction
             ("Lift (Fz)", QuantityType.TOTAL_FORCE, Vector3(0, 0, 1)),  # Force in z direction
         ]
@@ -1521,25 +1523,35 @@ class LuminaryCFDPipeline:
                 results["error"] = "No body surfaces found"
                 return results
 
-            # Download force outputs
-            # In global frame: DRAG=Fx (along x), SIDEFORCE=Fy (along y), LIFT=Fz (along z)
-            # Note: Try main forces first, then viscous/pressure components
-            force_types = [
-                (QuantityType.DRAG, "force_x"),              # Total drag (x-axis) - CRITICAL
-                (QuantityType.SIDEFORCE, "force_y"),         # Side force (y-axis) - CRITICAL
-                (QuantityType.LIFT, "force_z"),              # Lift (z-axis) - CRITICAL
-                (QuantityType.VISCOUS_DRAG, "viscous_drag"), # Viscous drag component
-                (QuantityType.PRESSURE_DRAG, "pressure_drag"), # Pressure drag component
+            # Download force outputs by definition name (since we use custom force_direction)
+            # Map output definition names to result keys
+            force_output_map = [
+                ("Drag (Fx)", "force_x"),           # Total force in -x direction
+                ("Viscous Drag", "viscous_drag"),   # Viscous force in -x direction
+                ("Pressure Drag", "pressure_drag"), # Pressure force in -x direction
+                ("Side Force (Fy)", "force_y"),     # Force in y direction
+                ("Lift (Fz)", "force_z"),           # Force in z direction
             ]
 
-            for quantity_type, result_key in force_types:
+            # Get all output definitions from template
+            outputs = template.list_output_definitions()
+
+            for output_name, result_key in force_output_map:
                 try:
-                    with simulation.download_surface_output(
-                        quantity_type=quantity_type,
-                        surface_ids=body_surfaces,
-                        calculation_type=CalculationType.AGGREGATE,
-                        frame_id="global_frame_id"
-                    ) as dl:
+                    # Find the output definition by name
+                    force_output = None
+                    for output in outputs:
+                        if hasattr(output, 'name') and output.name == output_name:
+                            force_output = output
+                            break
+
+                    if force_output is None:
+                        _log(f"Warning: Output '{output_name}' not found")
+                        results[result_key] = 0.0
+                        continue
+
+                    # Download by output ID
+                    with simulation.download_output(force_output.id) as dl:
                         content = dl.read()
                         # Parse CSV and average last 50 iterations
                         df = pd.read_csv(io.StringIO(content), index_col="Iteration index")
@@ -1551,7 +1563,6 @@ class LuminaryCFDPipeline:
                     # If this force type fails, log error and continue with others
                     _log(f"Warning: Failed to fetch {result_key}: {e}")
                     results[result_key] = 0.0
-                    results[f"{result_key}_error"] = str(e)
 
             # Calculate force coefficients: C = F / (0.5 * rho * V^2 * A)
             q_inf = 0.5 * ref_density * ref_velocity ** 2 * ref_area
