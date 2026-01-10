@@ -863,6 +863,7 @@ class LuminaryCFDPipeline:
         callback("Fetching force results...")
         force_results = self._fetch_force_results(
             simulation,
+            template,
             ref_area=frontal_area,
             ref_velocity=config.farfield_speed,
             project=project,
@@ -1336,23 +1337,12 @@ class LuminaryCFDPipeline:
             import pandas as pd
 
             # Use the template that was passed in (already have it)
-            # List all output definitions to find the area output
-            outputs = template.list_output_definitions()
-
-            # Find the Area output by name
-            area_output = None
-            for output in outputs:
-                if hasattr(output, 'name') and 'area' in output.name.lower():
-                    area_output = output
-                    break
-
-            if area_output is None:
-                if callback:
-                    callback("Error: Area output not found in template")
-                return 0.0
-
-            # Download the output data using the output ID
-            with simulation.download_output(area_output.id) as stream:
+            # Download wetted area using download_surface_output
+            with simulation.download_surface_output(
+                quantity_type=QuantityType.AREA,
+                surface_ids=body_surfaces,
+                calculation_type=CalculationType.AGGREGATE,
+            ) as stream:
                 area_df = pd.read_csv(stream, index_col="Iteration index")
 
             # Average the last 50 iterations (total wetted area)
@@ -1474,6 +1464,7 @@ class LuminaryCFDPipeline:
     @staticmethod
     def _fetch_force_results(
         simulation: lc.Simulation,
+        template: lc.SimulationTemplate,
         ref_area: float,
         ref_velocity: float,
         ref_density: float = 1.225,
@@ -1523,35 +1514,25 @@ class LuminaryCFDPipeline:
                 results["error"] = "No body surfaces found"
                 return results
 
-            # Download force outputs by definition name (since we use custom force_direction)
-            # Map output definition names to result keys
-            force_output_map = [
-                ("Drag (Fx)", "force_x"),           # Total force in -x direction
-                ("Viscous Drag", "viscous_drag"),   # Viscous force in -x direction
-                ("Pressure Drag", "pressure_drag"), # Pressure force in -x direction
-                ("Side Force (Fy)", "force_y"),     # Force in y direction
-                ("Lift (Fz)", "force_z"),           # Force in z direction
+            # Download force outputs using download_surface_output with force_direction
+            # Map force descriptions to result keys and parameters
+            force_downloads = [
+                ("force_x", QuantityType.TOTAL_FORCE, Vector3(-1, 0, 0)),      # Total force in -x
+                ("viscous_drag", QuantityType.VISCOUS_DRAG, Vector3(-1, 0, 0)), # Viscous in -x
+                ("pressure_drag", QuantityType.PRESSURE_DRAG, Vector3(-1, 0, 0)), # Pressure in -x
+                ("force_y", QuantityType.TOTAL_FORCE, Vector3(0, 1, 0)),       # Force in y
+                ("force_z", QuantityType.TOTAL_FORCE, Vector3(0, 0, 1)),       # Force in z
             ]
 
-            # Get all output definitions from template
-            outputs = template.list_output_definitions()
-
-            for output_name, result_key in force_output_map:
+            for result_key, quantity_type, direction in force_downloads:
                 try:
-                    # Find the output definition by name
-                    force_output = None
-                    for output in outputs:
-                        if hasattr(output, 'name') and output.name == output_name:
-                            force_output = output
-                            break
-
-                    if force_output is None:
-                        _log(f"Warning: Output '{output_name}' not found")
-                        results[result_key] = 0.0
-                        continue
-
-                    # Download by output ID
-                    with simulation.download_output(force_output.id) as dl:
+                    with simulation.download_surface_output(
+                        quantity_type=quantity_type,
+                        surface_ids=body_surfaces,
+                        calculation_type=CalculationType.AGGREGATE,
+                        frame_id="global_frame_id",
+                        force_direction=direction,
+                    ) as dl:
                         content = dl.read()
                         # Parse CSV and average last 50 iterations
                         df = pd.read_csv(io.StringIO(content), index_col="Iteration index")
