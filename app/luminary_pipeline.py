@@ -484,27 +484,28 @@ class LuminaryCFDPipeline:
                 # Continue with other residuals even if one fails
 
         # Create force output definitions
-        # In global frame (body frame for stationary vehicle):
-        # DRAG = force along x-axis (backward = positive drag)
-        # SIDEFORCE = force along y-axis (lateral)
-        # LIFT = force along z-axis (upward = positive lift)
+        # Use TOTAL_FORCE with force_direction to specify exact direction in global coordinates:
+        # Drag = force in -x direction (flow from +x, drag opposes it)
+        # Sideforce = force in y direction (lateral)
+        # Lift = force in z direction (upward)
         callback("Creating force and area output definitions...")
         # NOTE: Only create output definitions for main force components
         # Viscous/pressure drag are derived and downloaded directly without definitions
         force_outputs = [
-            ("Drag (Fx)", QuantityType.DRAG),
-            ("Side Force (Fy)", QuantityType.SIDEFORCE),
-            ("Lift (Fz)", QuantityType.LIFT),
+            ("Drag (Fx)", QuantityType.TOTAL_FORCE, Vector3(-1, 0, 0)),  # Force in -x direction
+            ("Side Force (Fy)", QuantityType.TOTAL_FORCE, Vector3(0, 1, 0)),  # Force in y direction
+            ("Lift (Fz)", QuantityType.TOTAL_FORCE, Vector3(0, 0, 1)),  # Force in z direction
         ]
 
-        for name, quantity in force_outputs:
+        for name, quantity, direction in force_outputs:
             try:
                 force_def = ForceOutputDefinition(
                     name=name,
                     quantity=quantity,
                     surfaces=list(body_surfaces),
-                    # Use global frame (which is the body frame for stationary vehicle)
+                    # Use global frame for force direction
                     reference_frame_id="global_frame_id",
+                    force_direction=direction,
                 )
                 created_def = template.create_output_definition(force_def)
                 callback(f"  ✓ Created force output: {name} (ID: {created_def.id})")
