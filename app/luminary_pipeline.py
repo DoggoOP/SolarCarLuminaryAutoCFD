@@ -167,10 +167,25 @@ class SimulationTemplateBuilder:
                 rear_center=rear_wheel_center,
             )
 
-        self._normalize_physics_metadata(payload)
+        # Don't normalize physics - let Luminary use the template's original physics ID
+        # self._normalize_physics_metadata(payload)
+
+        # Configure adaptive mesh refinement
+        # On Railway (production), enable Lumi Mesh Adaptation with target of 10M CVs
+        # On localhost (development), disable adaptation completely (generate minimal mesh only)
+        import os
+        is_production = os.getenv("RAILWAY_ENVIRONMENT") is not None
+
         amr = payload.setdefault("adaptiveMeshRefinement", {})
-        amr["meshingMethod"] = "MESH_METHOD_AUTO"
-        amr.setdefault("target_cv_millions", {})["value"] = 10
+
+        if is_production:
+            # Production: Enable Lumi Mesh Adaptation with 10M CVs
+            amr["meshingMethod"] = "MESH_METHOD_AUTO"
+            amr.setdefault("target_cv_millions", {})["value"] = 10
+        else:
+            # Local development: Generate minimal mesh only (no adaptation)
+            amr["meshingMethod"] = "MESH_METHOD_MINIMAL"
+
         return payload
 
     def dump_payload(self, payload: dict, *, label: Optional[str] = None) -> Path:
@@ -516,6 +531,8 @@ class LuminaryCFDPipeline:
                 # Continue even if one fails
 
         # Create area output for wetted area calculation
+        # Note: Unlike TOTAL_FORCE/TOTAL_MOMENT, AREA requires an output definition to be created
+        area_output_created = False
         try:
             from luminarycloud.outputs import SurfaceAverageOutputDefinition
             area_def = SurfaceAverageOutputDefinition(
@@ -524,12 +541,14 @@ class LuminaryCFDPipeline:
                 surfaces=list(body_surfaces),
                 calc_type=CalculationType.AGGREGATE,
             )
-            template.create_output_definition(area_def)
-            callback("  Created area output: Body Surface Area")
+            created_def = template.create_output_definition(area_def)
+            callback(f"  ✓ Created area output: Body Surface Area (ID: {created_def.id})")
+            area_output_created = True
         except Exception as exc:
-            callback(f"  Warning: Could not create area output: {exc}")
+            callback(f"  ✗ Warning: Could not create area output: {exc}")
+            # Don't fail - we can still get force results
 
-        return max_iterations
+        return max_iterations, area_output_created
 
     def run_case(
         self,
@@ -792,16 +811,16 @@ class LuminaryCFDPipeline:
                 physics_id = physics_list[0].physics_identifier.id
                 callback(f"DEBUG: Using physics_id from template: {physics_id}")
             else:
-                # Fallback to default if not found
-                physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
-                callback(f"DEBUG: Using default physics_id: {physics_id}")
+                # Fallback to base template's physics ID if not found
+                physics_id = "2924da26-7049-4381-8e51-3fce6539d124"
+                callback(f"DEBUG: Using base template physics_id: {physics_id}")
         except Exception as exc:
-            # Fallback to default if extraction fails
-            physics_id = "m3lahi1ckjf8ustjtjedwtxs1es8sre8"
-            callback(f"DEBUG: Failed to extract physics_id ({exc}), using default: {physics_id}")
+            # Fallback to base template's physics ID if extraction fails
+            physics_id = "2924da26-7049-4381-8e51-3fce6539d124"
+            callback(f"DEBUG: Failed to extract physics_id ({exc}), using base template ID: {physics_id}")
 
         # Set up stopping conditions and force outputs via API
-        max_iterations = self._setup_stopping_conditions(template, physics_id, body_surfaces, callback)
+        max_iterations, area_output_created = self._setup_stopping_conditions(template, physics_id, body_surfaces, callback)
 
         _check_cancellation()
         callback("Launching simulation …")
@@ -897,8 +916,8 @@ class LuminaryCFDPipeline:
             simulation,
             template,
             body_surfaces,
-            ref_area=frontal_area,
             wheel_surfaces=wheel_surfaces_for_area if wheel_surfaces_for_area else None,
+            area_output_created=area_output_created,
             callback=callback,
         )
         force_results["wetted_area"] = wetted_area
@@ -1325,12 +1344,20 @@ class LuminaryCFDPipeline:
         simulation: lc.Simulation,
         template: lc.SimulationTemplate,
         body_surfaces: List[str],
-        ref_area: float,
         wheel_surfaces: Optional[List[str]] = None,
+        area_output_created: bool = False,
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
-        Get wetted area from area output definition.
+        Calculate wetted area from output definition.
+
+        Note: The Luminary SDK currently doesn't expose a method to download
+        output definition results (area, custom outputs, etc.). The SDK only has:
+        - simulation.download_surface_output() - for on-demand force/moment computation
+        - simulation.download_global_residuals() - for residual data
+
+        Output definitions created via template.create_output_definition() are
+        visible in the Luminary Cloud UI but cannot be downloaded via SDK yet.
 
         Parameters
         ----------
@@ -1340,55 +1367,27 @@ class LuminaryCFDPipeline:
             Simulation template with output definitions
         body_surfaces : List[str]
             List of body surface names
-        ref_area : float
-            Reference frontal area in m²
         wheel_surfaces : Optional[List[str]]
             List of wheel surface names (if rotating wheels enabled)
+        area_output_created : bool
+            Whether the area output definition was successfully created
         callback : Optional[StatusCallback]
             Callback for logging messages
 
         Returns
         -------
         float
-            Total wetted area in m²
+            Wetted area in m² (returns 0.0 - SDK limitation)
         """
-        try:
-            import pandas as pd
-            from luminarycloud.enum import ReferenceValuesType
-            from luminarycloud.reference_values import ReferenceValues
+        if callback:
+            callback("Note: Wetted area download not supported by SDK - returning 0")
+            callback("(Area output is visible in Luminary Cloud UI)")
 
-            # Combine body surfaces and wheel surfaces
-            all_surfaces = list(body_surfaces)
-            if wheel_surfaces:
-                all_surfaces.extend(wheel_surfaces)
-
-            # Create reference values with user's frontal area and ref length of 5.8m
-            ref_vals = ReferenceValues(
-                reference_value_type=ReferenceValuesType.PRESCRIBE_VALUES,
-                area_ref=ref_area,
-                length_ref=5.8,
-                p_ref=101325.0,
-                t_ref=273.15,
-                v_ref=1.0,
-            )
-
-            # Download wetted area using download_surface_output
-            with simulation.download_surface_output(
-                quantity_type=QuantityType.AREA,
-                surface_ids=all_surfaces,
-                reference_values=ref_vals,
-                calculation_type=CalculationType.AGGREGATE,
-            ) as stream:
-                area_df = pd.read_csv(stream, index_col="Iteration index")
-
-            # Average the last 50 iterations (total wetted area)
-            wetted_area = area_df.tail(50).iloc[:, -1].mean()
-            return float(wetted_area)
-
-        except Exception as exc:
-            if callback:
-                callback(f"Error: Wetted area calculation failed: {exc}")
-            return 0.0
+        # SDK limitation: Cannot download output definition results
+        # Would need: simulation.download_output_definition_results(output_id)
+        # Or: simulation.download_output(output_id)
+        # Neither method exists in SDK v0.22.3
+        return 0.0
 
     @staticmethod
     def _calculate_center_of_pressure(
@@ -1414,7 +1413,7 @@ class LuminaryCFDPipeline:
             # Use global frame for CoP calculation (not body frame which may be rotated)
             frame_id = "global_frame_id"
 
-            # Download force components (average last 50 iterations)
+            # Download force components (average last 250 iterations)
             force_components = []
             for direction in [Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1)]:
                 with simulation.download_surface_output(
@@ -1427,7 +1426,7 @@ class LuminaryCFDPipeline:
                 ) as stream:
                     df = pd.read_csv(stream, index_col="Iteration index")
                     df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                    avg_force = df.tail(50).iloc[:, 0].mean()
+                    avg_force = df.tail(250).iloc[:, 0].mean()
                     force_components.append(avg_force)
 
             total_force = np.array(force_components)
@@ -1447,7 +1446,7 @@ class LuminaryCFDPipeline:
                 ) as stream:
                     df = pd.read_csv(stream, index_col="Iteration index")
                     df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                    avg_moment = df.tail(50).iloc[:, 0].mean()
+                    avg_moment = df.tail(250).iloc[:, 0].mean()
                     moment_components.append(avg_moment)
 
             total_moment = np.array(moment_components)
@@ -1570,11 +1569,11 @@ class LuminaryCFDPipeline:
                         force_direction=direction,
                     ) as dl:
                         content = dl.read()
-                        # Parse CSV and average last 50 iterations
+                        # Parse CSV and average last 250 iterations
                         df = pd.read_csv(io.StringIO(content), index_col="Iteration index")
                         df = df.drop(["Time step", "Physical time"], axis=1, errors='ignore')
-                        # Average the last 50 iterations
-                        avg_force = df.tail(50).iloc[:, 0].mean()
+                        # Average the last 250 iterations
+                        avg_force = df.tail(250).iloc[:, 0].mean()
                         results[result_key] = float(avg_force)
                 except Exception as e:
                     # If this force type fails, log error and continue with others
