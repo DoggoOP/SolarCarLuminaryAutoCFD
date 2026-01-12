@@ -886,8 +886,21 @@ class LuminaryCFDPipeline:
         force_results.update(cop_results)
 
         # Calculate wetted area
-        callback(f"Calculating wetted area using {len(body_surfaces)} body surfaces...")
-        wetted_area = self._calculate_wetted_area(simulation, template, body_surfaces, callback)
+        # Combine wheel surfaces if rotating wheels enabled
+        wheel_surfaces_for_area = []
+        if config.rotating_wheels:
+            wheel_surfaces_for_area = front_wheel_surfaces + rear_wheel_surfaces
+
+        total_surfaces_count = len(body_surfaces) + len(wheel_surfaces_for_area)
+        callback(f"Calculating wetted area using {total_surfaces_count} surfaces (body + wheels)...")
+        wetted_area = self._calculate_wetted_area(
+            simulation,
+            template,
+            body_surfaces,
+            ref_area=frontal_area,
+            wheel_surfaces=wheel_surfaces_for_area if wheel_surfaces_for_area else None,
+            callback=callback,
+        )
         force_results["wetted_area"] = wetted_area
         if wetted_area > 0:
             callback(f"✓ Wetted area: {wetted_area:.4f} m²")
@@ -1312,6 +1325,8 @@ class LuminaryCFDPipeline:
         simulation: lc.Simulation,
         template: lc.SimulationTemplate,
         body_surfaces: List[str],
+        ref_area: float,
+        wheel_surfaces: Optional[List[str]] = None,
         callback: Optional[StatusCallback] = None,
     ) -> float:
         """
@@ -1324,7 +1339,11 @@ class LuminaryCFDPipeline:
         template : lc.SimulationTemplate
             Simulation template with output definitions
         body_surfaces : List[str]
-            List of body surface names (not used, kept for compatibility)
+            List of body surface names
+        ref_area : float
+            Reference frontal area in m²
+        wheel_surfaces : Optional[List[str]]
+            List of wheel surface names (if rotating wheels enabled)
         callback : Optional[StatusCallback]
             Callback for logging messages
 
@@ -1335,12 +1354,29 @@ class LuminaryCFDPipeline:
         """
         try:
             import pandas as pd
+            from luminarycloud.enum import ReferenceValuesType
+            from luminarycloud.reference_values import ReferenceValues
 
-            # Use the template that was passed in (already have it)
+            # Combine body surfaces and wheel surfaces
+            all_surfaces = list(body_surfaces)
+            if wheel_surfaces:
+                all_surfaces.extend(wheel_surfaces)
+
+            # Create reference values with user's frontal area and ref length of 5.8m
+            ref_vals = ReferenceValues(
+                reference_value_type=ReferenceValuesType.PRESCRIBE_VALUES,
+                area_ref=ref_area,
+                length_ref=5.8,
+                p_ref=101325.0,
+                t_ref=273.15,
+                v_ref=1.0,
+            )
+
             # Download wetted area using download_surface_output
             with simulation.download_surface_output(
                 quantity_type=QuantityType.AREA,
-                surface_ids=body_surfaces,
+                surface_ids=all_surfaces,
+                reference_values=ref_vals,
                 calculation_type=CalculationType.AGGREGATE,
             ) as stream:
                 area_df = pd.read_csv(stream, index_col="Iteration index")
