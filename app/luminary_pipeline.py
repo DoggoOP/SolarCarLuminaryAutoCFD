@@ -15,6 +15,7 @@ from luminarycloud.enum import QuantityType, ResidualType, CalculationType
 from luminarycloud.meshing import MeshGenerationParams, BoundaryLayerParams
 from luminarycloud.outputs import ForceOutputDefinition, ResidualOutputDefinition
 from luminarycloud.params.geometry import shapes as geom_shapes
+from luminarycloud.params.enum import TransitionModel
 from luminarycloud.pipelines import api as pipelines_api
 from luminarycloud.types import Vector3
 
@@ -169,6 +170,14 @@ class SimulationTemplateBuilder:
 
         # Don't normalize physics - let Luminary use the template's original physics ID
         # self._normalize_physics_metadata(payload)
+
+        # Ensure transition model is set correctly
+        physics_list = payload.get("physics") or []
+        if physics_list and len(physics_list) > 0:
+            fluid = physics_list[0]
+            turbulence = fluid.get("fluid", {}).get("turbulence", {})
+            if turbulence:
+                turbulence["transitionModel"] = TransitionModel.GAMMA_RE_THETA_2009.value
 
         # Configure adaptive mesh refinement
         # On Railway (production), enable Lumi Mesh Adaptation with target of 10M CVs
@@ -596,7 +605,7 @@ class LuminaryCFDPipeline:
         front = max(dims[1] * 30, dims[1] + 0.1)
         back = min(dims[1] * -60, - dims[1] -0.1)
         padding = config.farfield_padding
-        floor_z = min(bbox_min[2], bbox_max[2]) - 0.001 - padding
+        floor_z = min(bbox_min[2], bbox_max[2]) - 0.00001 - padding
         z_height = max(dims[2] * config.farfield_multiplier, dims[2] + 0.05)
         z_max = floor_z + z_height + padding
         min_corner = (
@@ -802,6 +811,18 @@ class LuminaryCFDPipeline:
             callback(f"DEBUG: Simulation params saved to {tmp_params}")
             # tmp_params.unlink(missing_ok=True)
         callback(f"Created simulation template {template.id}.")
+
+        # Verify the transition model in the created template
+        try:
+            template_params = template.get_parameters()
+            physics_list = getattr(template_params, 'physics', None) or []
+            if physics_list and len(physics_list) > 0:
+                fluid_physics = physics_list[0]
+                if hasattr(fluid_physics, 'fluid') and hasattr(fluid_physics.fluid, 'turbulence'):
+                    transition_model = getattr(fluid_physics.fluid.turbulence, 'transition_model', 'UNKNOWN')
+                    callback(f"DEBUG: Template transition model: {transition_model}")
+        except Exception as exc:
+            callback(f"DEBUG: Could not verify transition model: {exc}")
 
         # Get physics_id from the template parameters (don't hardcode it)
         try:
