@@ -605,7 +605,7 @@ class LuminaryCFDPipeline:
         front = max(dims[1] * 30, dims[1] + 0.1)
         back = min(dims[1] * -60, - dims[1] -0.1)
         padding = config.farfield_padding
-        floor_z = min(bbox_min[2], bbox_max[2]) - 0.00001 - padding
+        floor_z = min(bbox_min[2], bbox_max[2]) - 0.001 - padding
         z_height = max(dims[2] * config.farfield_multiplier, dims[2] + 0.05)
         z_max = floor_z + z_height + padding
         min_corner = (
