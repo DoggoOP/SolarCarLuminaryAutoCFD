@@ -454,7 +454,6 @@ class LuminaryCFDPipeline:
         template: lc.SimulationTemplate,
         physics_id: str,
         body_surfaces: Sequence[str],
-        drag_force_direction: Tuple[float, float, float],
         callback: StatusCallback,
     ) -> int:
         """
@@ -516,7 +515,7 @@ class LuminaryCFDPipeline:
         # Sideforce = force in y direction (lateral)
         # Lift = force in z direction (upward)
         callback("Creating force and area output definitions...")
-        drag_vector = Vector3(*drag_force_direction)
+        drag_vector = Vector3(-1, 0, 0)
         force_outputs = [
             ("Drag (Fx)", QuantityType.TOTAL_FORCE, drag_vector),  # Force component along freestream
             ("Viscous Drag", QuantityType.VISCOUS_DRAG, drag_vector),
@@ -607,7 +606,7 @@ class LuminaryCFDPipeline:
         front = max(dims[1] * 30, dims[1] + 0.1)
         back = min(dims[1] * -60, - dims[1] -0.1)
         padding = config.farfield_padding
-        floor_z = min(bbox_min[2], bbox_max[2]) - 0.005 - padding
+        floor_z = min(bbox_min[2], bbox_max[2]) - 0.01 - padding
         z_height = max(dims[2] * config.farfield_multiplier, dims[2] + 0.05)
         z_max = floor_z + z_height + padding
         min_corner = (
@@ -786,7 +785,6 @@ class LuminaryCFDPipeline:
         #   - farfield_speed (26.55) = magnitude of wind vector, used for reference velocity and coefficients
         #   - ground_speed (24.59) = constant forward speed, used for moving floor boundary condition
         #   This separation ensures the floor moves at vehicle speed, not wind speed
-        drag_force_direction = self._normalize_vector(config.farfield_direction)
         payload = self._template_builder.build_payload(
             body_surfaces=body_surfaces,
             floor_surfaces=floor_surfaces,
@@ -848,7 +846,6 @@ class LuminaryCFDPipeline:
             template,
             physics_id,
             body_surfaces,
-            drag_force_direction,
             callback,
         )
 
@@ -917,7 +914,6 @@ class LuminaryCFDPipeline:
             ref_velocity=config.farfield_speed,
             project=project,
             body_surfaces=body_surfaces,
-            drag_force_direction=drag_force_direction,
             callback=callback,
         )
 
@@ -1051,17 +1047,11 @@ class LuminaryCFDPipeline:
     def _direction_vector(
         direction: Tuple[float, float, float], speed: float
     ) -> Tuple[float, float, float]:
-        unit = LuminaryCFDPipeline._normalize_vector(direction)
-        return tuple(component * speed for component in unit)
-
-    @staticmethod
-    def _normalize_vector(
-        direction: Tuple[float, float, float],
-    ) -> Tuple[float, float, float]:
         norm = math.sqrt(sum(axis**2 for axis in direction))
         if norm == 0:
             raise ValueError("Wind direction vector cannot be zero.")
-        return tuple(axis / norm for axis in direction)
+        unit = tuple(axis / norm for axis in direction)
+        return tuple(component * speed for component in unit)
 
     @staticmethod
     def _infer_floor_surfaces_by_z(
@@ -1542,7 +1532,6 @@ class LuminaryCFDPipeline:
         ref_density: float = 1.225,
         project: Optional[lc.Project] = None,
         body_surfaces: Optional[List[str]] = None,
-        drag_force_direction: Optional[Tuple[float, float, float]] = None,
         callback: Optional[StatusCallback] = None,
     ) -> Dict[str, float]:
         """Fetch force output values and calculate coefficients."""
@@ -1589,11 +1578,11 @@ class LuminaryCFDPipeline:
 
             # Download force outputs using download_surface_output with force_direction
             # Map force descriptions to result keys and parameters
-            drag_vector = Vector3(*(drag_force_direction or (-1.0, 0.0, 0.0)))
+            drag_vector = Vector3(-1, 0, 0)
             force_downloads = [
                 ("force_x", QuantityType.TOTAL_FORCE, drag_vector),
-                ("viscous_drag", QuantityType.VISCOUS_DRAG, drag_vector),
-                ("pressure_drag", QuantityType.PRESSURE_DRAG, drag_vector),
+                ("viscous_drag", QuantityType.FRICTION_FORCE, drag_vector),
+                ("pressure_drag", QuantityType.PRESSURE_FORCE, drag_vector),
                 ("force_y", QuantityType.TOTAL_FORCE, Vector3(0, 1, 0)),
                 ("force_z", QuantityType.TOTAL_FORCE, Vector3(0, 0, 1)),
             ]
