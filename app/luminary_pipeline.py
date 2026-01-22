@@ -138,6 +138,7 @@ class SimulationTemplateBuilder:
         farfield_bc["boundaryConditionName"] = "auto_farfield"
         farfield_bc["surfaces"] = list(farfield_surfaces)
         _set_vector(farfield_bc.setdefault("farfieldFlowDirection", {}), farfield_vector)
+        farfield_bc.setdefault("farfieldVelocityMagnitude", {})["value"] = farfield_speed
         mach = max(farfield_speed / sound_speed, 1e-4)
         farfield_bc.setdefault("farfieldMachNumber", {})["value"] = mach
 
