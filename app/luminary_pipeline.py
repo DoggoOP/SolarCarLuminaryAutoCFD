@@ -454,7 +454,7 @@ class LuminaryCFDPipeline:
         self,
         template: lc.SimulationTemplate,
         physics_id: str,
-        body_surfaces: Sequence[str],
+        force_surfaces: Sequence[str],
         callback: StatusCallback,
     ) -> int:
         """
@@ -518,7 +518,7 @@ class LuminaryCFDPipeline:
         callback("Creating force and area output definitions...")
         drag_vector = Vector3(-1, 0, 0)
         force_outputs = [
-            ("Drag (Fx)", QuantityType.TOTAL_FORCE, drag_vector),  # Force component along freestream
+            ("Drag (Fx)", QuantityType.TOTAL_FORCE, drag_vector),  # Force component along global -x
             ("Viscous Drag", QuantityType.VISCOUS_DRAG, drag_vector),
             ("Pressure Drag", QuantityType.PRESSURE_DRAG, drag_vector),
             ("Side Force (Fy)", QuantityType.TOTAL_FORCE, Vector3(0, 1, 0)),
@@ -530,7 +530,7 @@ class LuminaryCFDPipeline:
                 force_def = ForceOutputDefinition(
                     name=name,
                     quantity=quantity,
-                    surfaces=list(body_surfaces),
+                    surfaces=list(force_surfaces),
                     # Use global frame for force direction
                     reference_frame_id="global_frame_id",
                     force_direction=direction,
@@ -549,7 +549,7 @@ class LuminaryCFDPipeline:
             area_def = SurfaceAverageOutputDefinition(
                 name="Body Surface Area",
                 quantity=QuantityType.AREA,
-                surfaces=list(body_surfaces),
+                surfaces=list(force_surfaces),
                 calc_type=CalculationType.AGGREGATE,
             )
             created_def = template.create_output_definition(area_def)
@@ -727,6 +727,7 @@ class LuminaryCFDPipeline:
         # Detect wheel surfaces if rotating wheels enabled
         front_wheel_surfaces: List[str] = []
         rear_wheel_surfaces: List[str] = []
+        wheel_surfaces_for_area: List[str] = []
 
         if config.rotating_wheels:
             callback("Rotating wheels enabled - detecting wheel surfaces...")
@@ -748,6 +749,7 @@ class LuminaryCFDPipeline:
                     surface_map, wheel_surfaces
                 )
                 callback(f"Front wheels: {front_wheel_surfaces}, Rear: {rear_wheel_surfaces}")
+                wheel_surfaces_for_area = front_wheel_surfaces + rear_wheel_surfaces
             else:
                 callback("Warning: No wheel surfaces detected")
 
@@ -772,6 +774,8 @@ class LuminaryCFDPipeline:
             raise RuntimeError(
                 "Failed to infer body surfaces. Provide explicit surface names for the solar car."
             )
+
+        force_surfaces = list(dict.fromkeys(body_surfaces + wheel_surfaces_for_area))
 
         callback(
             "Using body surfaces: "
@@ -846,7 +850,7 @@ class LuminaryCFDPipeline:
         max_iterations, area_output_created = self._setup_stopping_conditions(
             template,
             physics_id,
-            body_surfaces,
+            force_surfaces,
             callback,
         )
 
@@ -914,7 +918,7 @@ class LuminaryCFDPipeline:
             ref_area=frontal_area,
             ref_velocity=config.farfield_speed,
             project=project,
-            body_surfaces=body_surfaces,
+            force_surfaces=force_surfaces,
             callback=callback,
         )
 
@@ -933,11 +937,6 @@ class LuminaryCFDPipeline:
         force_results.update(cop_results)
 
         # Calculate wetted area
-        # Combine wheel surfaces if rotating wheels enabled
-        wheel_surfaces_for_area = []
-        if config.rotating_wheels:
-            wheel_surfaces_for_area = front_wheel_surfaces + rear_wheel_surfaces
-
         total_surfaces_count = len(body_surfaces) + len(wheel_surfaces_for_area)
         callback(f"Calculating wetted area using {total_surfaces_count} surfaces (body + wheels)...")
         wetted_area = self._calculate_wetted_area(
@@ -1532,7 +1531,7 @@ class LuminaryCFDPipeline:
         ref_velocity: float,
         ref_density: float = 1.225,
         project: Optional[lc.Project] = None,
-        body_surfaces: Optional[List[str]] = None,
+        force_surfaces: Optional[List[str]] = None,
         callback: Optional[StatusCallback] = None,
     ) -> Dict[str, float]:
         """Fetch force output values and calculate coefficients."""
@@ -1552,8 +1551,8 @@ class LuminaryCFDPipeline:
                 results["error"] = "Project not provided"
                 return results
 
-            # Use provided body surfaces, or try to infer them as fallback
-            if not body_surfaces:
+            # Use provided surfaces (body + wheels), or try to infer them as fallback
+            if not force_surfaces:
                 # Get the mesh to find body surfaces
                 mesh = None
                 for m in project.list_meshes():
@@ -1571,9 +1570,9 @@ class LuminaryCFDPipeline:
                 all_surfaces = [b.name for b in boundaries]
 
                 # Filter to body surfaces (exclude farfield/floor - this is a fallback heuristic)
-                body_surfaces = [s for s in all_surfaces if 'BC_13' not in s and 'BC_14' not in s]
+                force_surfaces = [s for s in all_surfaces if 'BC_13' not in s and 'BC_14' not in s]
 
-            if not body_surfaces:
+            if not force_surfaces:
                 results["error"] = "No body surfaces found"
                 return results
 
@@ -1592,7 +1591,7 @@ class LuminaryCFDPipeline:
                 try:
                     with simulation.download_surface_output(
                         quantity_type=quantity_type,
-                        surface_ids=body_surfaces,
+                        surface_ids=force_surfaces,
                         calculation_type=CalculationType.AGGREGATE,
                         frame_id="global_frame_id",
                         force_direction=direction,
