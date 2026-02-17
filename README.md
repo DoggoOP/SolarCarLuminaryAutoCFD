@@ -1,288 +1,181 @@
 # AutoCFD Solar Car Pipeline
 
-A fully automated CFD pipeline for solar car aerodynamics testing. Upload a CAD file, get drag/lift/side force results automatically logged to Google Sheets, and deploy to the web in minutes.
-
-## 🚀 Features
-
-- **🌐 Web Interface** - Simple FastAPI dashboard for uploading CAD files and monitoring jobs
-- **☁️ Luminary Cloud Integration** - Automated geometry processing, meshing, and RANS CFD simulation
-- **📊 Google Sheets Logging** - Automatic results tracking with drag, lift, side force, and coefficients
-- **🔄 Backfill Support** - Import historical simulation data into spreadsheets
-- **⚙️ Smart Automation** - Automatic frontal area calculation, force outputs, and convergence monitoring
-- **🔄 Rotating Wheels** - Optional rotating wheel simulation with auto-detection and customizable parameters
-- **🚢 Deploy Ready** - Containerized and configured for Railway, Render, or Google Cloud Run
+AutoCFD automates the entire Luminary Cloud CFD workflow for solar-car geometries. Upload a CAD file, track progress in a FastAPI dashboard, and log the resulting drag, lift, and side forces (including coefficients) directly to Google Sheets or your deployment platform.
 
 ---
 
-## 📋 Table of Contents
+## Contents
 
-- [How It Works](#how-it-works)
-- [Quick Start](#quick-start)
-- [Google Sheets Integration](#google-sheets-integration)
-- [Backfill Historical Results](#backfill-historical-results)
-- [Deployment](#deployment)
-- [Configuration](#configuration)
-- [API Reference](#api-reference)
-- [Troubleshooting](#troubleshooting)
-
----
-
-## 🔧 How It Works
-
-The pipeline automates the complete CFD workflow:
-
-1. **Upload CAD** - Accepts STEP, STL, or other CAD formats via web interface
-2. **Create Geometry** - Imports CAD into Luminary Cloud and computes bounding box
-3. **Build Farfield** - Automatically creates rectangular farfield domain:
-   - Width/Length: 25× vehicle dimensions (configurable)
-   - Floor: 1mm below lowest point
-   - Height: Scaled proportionally
-4. **Calculate Reference Values**:
-   - **Length**: Fixed at 5.8 meters (vehicle length)
-   - **Area**: YZ projection (frontal area) calculated from bounding box
-   - **Velocity**: User-specified wind speed (default 24.59 m/s)
-5. **Generate Mesh** - Creates volume mesh with adaptive refinement (target: 10M cells)
-6. **Setup Simulation**:
-   - RANS turbulence (k-omega SST with γ-Reθ transition model)
-   - Adaptive boundary layer (40 layers, 1.15 growth rate)
-   - Moving floor boundary condition (constant ground speed)
-   - Optional rotating wheels (auto-detected, 110.2 rad/s)
-   - Stopping conditions: 7500 iterations or convergence
-   - Force outputs: Drag, Lift, Side Force on body surfaces
-7. **Run Simulation** - Launches and monitors CFD solve
-8. **Extract Results** - Fetches force values and calculates coefficients:
-   - Cd = Drag / (0.5 × ρ × V² × A)
-   - Cl = Lift / (0.5 × ρ × V² × A)
-   - Cs = Side Force / (0.5 × ρ × V² × A)
-9. **Log to Sheets** - Appends results with timestamp, clickable Luminary link, and metadata
-
-All status updates stream to the web dashboard in real-time.
+1. [Features](#features)
+2. [Architecture Overview](#architecture-overview)
+3. [Quick Start](#quick-start)
+4. [Configuration](#configuration)
+5. [Google Sheets Integration](#google-sheets-integration)
+6. [Backfilling Historical Runs](#backfilling-historical-runs)
+7. [Deployment](#deployment)
+8. [API Reference](#api-reference)
+9. [Advanced Usage](#advanced-usage)
+10. [Troubleshooting](#troubleshooting)
+11. [Project Structure](#project-structure)
+12. [Contributing](#contributing)
 
 ---
 
-## 🚀 Quick Start
+## Features
+
+- **FastAPI dashboard** for uploads, job monitoring, and cancellation.
+- **Luminary Cloud automation**: geometry import, farfield creation, meshing, simulation setup, and monitoring.
+- **Smart meshing** with adaptive refinement, automatic farfield sizing, and optional rotating wheels (including auto-detected surfaces and motion frames).
+- **Automatic post-processing**: drag, viscous drag, pressure drag, side force, lift, center of pressure, CdA/CdW, and convergence metadata.
+- **Google Sheets logging** with structured headers and hyperlinks to Luminary simulations.
+- **Historical backfill script** to import previous Luminary runs.
+- **Ready-to-deploy container** with templates for Railway, Render, and Cloud Run.
+
+---
+
+## Architecture Overview
+
+| Component | Purpose |
+|-----------|---------|
+| `app/main.py` | FastAPI routes, upload handling, background execution, job dashboard. |
+| `app/luminary_pipeline.py` | Core orchestration: geometry processing, meshing, simulation setup, stopping conditions, results extraction. |
+| `app/job_store.py` | In-memory tracking of job metadata, logs, and cancellation. |
+| `app/sheets_logger.py` | Authentication and logging into Google Sheets, including header management. |
+| `app/backfill_sheets.py` | CLI to import finished Luminary simulations into Sheets. |
+| `data/base_simulation_params.json` | Baseline Luminary template copied and parametrized per job. |
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- [Luminary Cloud account](https://luminarycloud.com) with API key
-- (Optional) Google service account for Sheets integration
+- Luminary Cloud API key with project access
+- (Optional) Google service account credentials for Sheets logging
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone <your-repo-url>
 cd autoCFD
 
-# Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
 
-# Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Configure environment
 cp .env.example .env
-# Edit .env and add your LUMINARY_API_KEY
+# Edit .env with LUMINARY_API_KEY and any optional settings
 ```
 
-### Run Locally
+### Local Development Server
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-Visit **http://localhost:8000** to access the dashboard.
+Visit `http://localhost:8000` to upload CAD files, set parameters, and monitor jobs.
 
 ---
 
-## 📊 Google Sheets Integration
+## Configuration
 
-### Setup
+AutoCFD reads settings from environment variables (via `app/config.py`). Key values:
 
-1. **Create Google Service Account**
-   - Go to [Google Cloud Console](https://console.cloud.google.com)
-   - Create new project or select existing
-   - Enable Google Sheets API and Google Drive API
-   - Create Service Account credentials
-   - Download JSON key file
+| Variable | Required | Default | Notes |
+|----------|----------|---------|-------|
+| `LUMINARY_API_KEY` | Yes | — | Luminary Cloud API token. |
+| `LUMINARY_PROJECT_NAME` | No | `AutoCFD Solar Car` | Target project or fallback when `project_name` is omitted. |
+| `DEFAULT_FARFIELD_SPEED` | No | `24.59` | Default wind speed shown in the dashboard. |
+| `BASE_SIM_TEMPLATE_PATH` | No | `data/base_simulation_params.json` | Template copied before customization; must exist. |
+| `SPEED_OF_SOUND` | No | `340.29` | Used to compute Mach number. |
+| `UPLOADS_DIR` | No | `uploads` | Temporary CAD storage (auto-created). |
+| `GOOGLE_SHEETS_CREDENTIALS` | No | — | Path or JSON string for gspread. |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | No | — | Sheet to append results to. |
 
-2. **Create Spreadsheet**
-   - Create a new Google Sheet
-   - Share it with your service account email (from JSON file)
-   - Give "Editor" permissions
-   - Copy the Spreadsheet ID from URL
+Modify `data/base_simulation_params.json` if you need to change turbulence options, solver controls, or baseline boundary conditions. Most convergence criteria and force outputs are injected later through the SDK, not the JSON file.
 
-3. **Configure Environment**
+---
+
+## Google Sheets Integration
+
+1. **Create a Google service account** (Cloud Console → enable Sheets + Drive → create credentials).
+2. **Share your spreadsheet** with the service account email (Editor access).
+3. **Configure environment variables**:
    ```bash
-   # Add to .env
-   GOOGLE_SHEETS_CREDENTIALS=/path/to/credentials.json
-   GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
+   GOOGLE_SHEETS_CREDENTIALS=/path/to/credentials.json   # or JSON string
+   GOOGLE_SHEETS_SPREADSHEET_ID=<spreadsheet_id>
    ```
+4. On first run, `SheetsLogger` creates headers and formats row 1. Each completed simulation logs:
+   - Timestamp, job/simulation identifiers, wind speed, wind direction, frontal area.
+   - Drag/viscous drag/pressure drag, side force, lift, CdA, CdW.
+   - Center-of-pressure coordinates, moments, force magnitude/direction.
+   - Convergence status, iteration limit, and a hyperlink to the Luminary result.
 
-4. **Automatic Headers**
-   - Headers are created automatically on first run
-   - Columns: Timestamp, Job Name, Simulation ID, Forces, Coefficients, Wind Speed, Frontal Area, Luminary Link
-
-### What Gets Logged
-
-Each simulation appends a row with:
-- **Timestamp** - UTC time of completion
-- **Job Name** - Simulation identifier
-- **Simulation ID** - Luminary Cloud ID
-- **Drag Force (N)** - Total drag force
-- **Drag Coefficient** - Cd (dimensionless)
-- **Lift Force (N)** - Total lift force
-- **Lift Coefficient** - Cl (dimensionless)
-- **Side Force (N)** - Total side force
-- **Side Force Coefficient** - Cs (dimensionless)
-- **Convergence Status** - COMPLETED, FAILED, etc.
-- **Max Iterations** - 7500
-- **Wind Speed (m/s)** - Reference velocity
-- **Frontal Area (m²)** - Calculated YZ projection
-- **Luminary Link** - Clickable URL to view results
-
-See [GOOGLE_SHEETS_SETUP.md](GOOGLE_SHEETS_SETUP.md) for detailed setup instructions.
+See `GOOGLE_SHEETS_SETUP.md` for screenshots and additional instructions.
 
 ---
 
-## 🔄 Backfill Historical Results
+## Backfilling Historical Runs
 
-Import results from previously completed simulations:
+Import prior Luminary simulations into the Google Sheet:
 
 ```bash
-# Dry run - see what would be imported
+# Preview changes without writing
 python -m app.backfill_sheets --dry-run
 
-# Import all completed simulations
+# Process all completed simulations in the default project
 python -m app.backfill_sheets
 
-# Import specific project
-python -m app.backfill_sheets --project "AutoCFD Solar Car"
-
-# Limit number of simulations
-python -m app.backfill_sheets --limit 10
+# Target a specific project or limit the number processed
+python -m app.backfill_sheets --project "AutoCFD Solar Car" --limit 10
 ```
 
-The backfill script:
-- ✅ Fetches completed simulations from Luminary Cloud
-- ✅ Extracts reference values (velocity, area) from simulation parameters
-- ✅ Downloads force output data (drag, lift, side force)
-- ✅ Calculates coefficients
-- ✅ Appends to Google Sheets with all metadata
+The script loads reference values from each simulation, reuses the same force extraction logic as live runs, and logs the results via `SheetsLogger`. Errors are reported per simulation so a single failure does not abort the entire backfill.
 
 ---
 
-## 🚢 Deployment
+## Deployment
 
-Deploy your application to the cloud for 24/7 access.
+### Railway (recommended)
 
-### Quick Deploy to Railway (Recommended)
+1. Run `./scripts/prepare_credentials_for_deployment.sh` to convert your Sheets credentials JSON into a single-line string.
+2. Push the repository to GitHub.
+3. Create a new Railway project → deploy from GitHub → set the environment variables listed below.
+4. Railway automatically builds the Dockerfile and exposes the app at `https://<project>.railway.app`.
 
-1. **Prepare credentials**:
-   ```bash
-   ./scripts/prepare_credentials_for_deployment.sh
-   ```
+Required Railway variables:
+```
+LUMINARY_API_KEY=<api_key>
+LUMINARY_PROJECT_NAME=<project_name>
+DEFAULT_FARFIELD_SPEED=24.59
+GOOGLE_SHEETS_SPREADSHEET_ID=<sheet_id>
+GOOGLE_SHEETS_CREDENTIALS=<single-line-json>
+```
 
-2. **Push to GitHub**:
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-   git push -u origin main
-   ```
+### Other Options
 
-3. **Deploy on Railway**:
-   - Go to [railway.app](https://railway.app)
-   - Sign up with GitHub
-   - Click "New Project" → "Deploy from GitHub repo"
-   - Select your repository
-   - Add environment variables (see below)
-   - Railway auto-deploys!
+- **Render**: follow `render.yaml` and the instructions in `QUICKSTART_DEPLOY.md`.
+- **Google Cloud Run**: see `DEPLOYMENT.md` for container registry steps and service configuration.
+- **Docker**: build and run locally using `docker build -t autocfd .` and `docker run -p 8000:8000 autocfd`.
 
-4. **Set Environment Variables** in Railway dashboard:
-   ```
-   LUMINARY_API_KEY=<your_api_key>
-   LUMINARY_PROJECT_NAME=AutoCFD Solar Car
-   DEFAULT_FARFIELD_SPEED=24.59
-   GOOGLE_SHEETS_SPREADSHEET_ID=<your_spreadsheet_id>
-   GOOGLE_SHEETS_CREDENTIALS=<json_string_from_script>
-   ```
-
-Your app will be live at: `https://your-app.railway.app`
-
-### Other Deployment Options
-
-- **Render** - See [QUICKSTART_DEPLOY.md](QUICKSTART_DEPLOY.md)
-- **Google Cloud Run** - See [DEPLOYMENT.md](DEPLOYMENT.md)
-- **Docker** - `docker build -t autocfd . && docker run -p 8000:8000 autocfd`
-
-**Deployment Documentation:**
-- 📖 [QUICKSTART_DEPLOY.md](QUICKSTART_DEPLOY.md) - 10-minute deployment guide
-- 📖 [DEPLOYMENT.md](DEPLOYMENT.md) - Comprehensive deployment options
-- 🐳 [Dockerfile](Dockerfile) - Container configuration
+The Dockerfile installs all dependencies, copies only `app/` and `data/`, and honors the platform-provided `PORT`.
 
 ---
 
-## ⚙️ Configuration
+## API Reference
 
-### Environment Variables
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Dashboard with upload form and job history. |
+| `POST /run` | Accepts multipart form data (CAD file + parameters). Returns `{"job_id": ...}`. |
+| `GET /jobs` | Lists all jobs (newest first) with logs, results, and status. |
+| `GET /jobs/{job_id}` | Returns a single job. |
+| `POST /jobs/{job_id}/cancel` | Cancels a pending/running job. |
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `LUMINARY_API_KEY` | ✅ Yes | - | Your Luminary Cloud API token |
-| `LUMINARY_PROJECT_NAME` | No | `AutoCFD Solar Car` | Project name for simulations |
-| `DEFAULT_FARFIELD_SPEED` | No | `24.59` | Default wind speed (m/s) |
-| `BASE_SIM_TEMPLATE_PATH` | No | `data/base_simulation_params.json` | Simulation template |
-| `SPEED_OF_SOUND` | No | `340.29` | Speed of sound (m/s) for Mach calculation |
-| `UPLOADS_DIR` | No | `uploads` | Directory for temporary CAD files |
-| `GOOGLE_SHEETS_CREDENTIALS` | No | - | Path to JSON or JSON string |
-| `GOOGLE_SHEETS_SPREADSHEET_ID` | No | - | Google Sheet ID for logging |
-
-### Simulation Template
-
-Edit `data/base_simulation_params.json` to customize:
-
-- **Turbulence Model** - Currently k-omega SST with QCR correction
-- **Solver Settings** - CFL=50, NODAL_GRADIENT, preconditioning enabled
-- **Convergence Criteria** - Set via API (7500 max iterations)
-- **Boundary Conditions**:
-  - Body surfaces: No-slip wall
-  - Floor: Moving wall (velocity = freestream)
-  - Farfield: Pressure farfield
-
-**Note**: `convergenceCriteria` must be set via API, not in JSON template.
-
-### Reference Values
-
-- **Length**: Always 5.8 meters (vehicle length)
-- **Area**: Automatically calculated as YZ projection (frontal area)
-- **Velocity**: User-specified wind speed from form
-
-### Force Outputs
-
-Automatically configured for every simulation:
-- **Drag** - Force in X direction (body frame)
-- **Lift** - Force in Z direction (body frame)
-- **Side Force** - Force in Y direction (body frame)
-
-All forces integrate over body surfaces (excludes floor and farfield).
-
----
-
-## 📡 API Reference
-
-### Web Interface
-
-- **GET /** - Dashboard with job list and upload form
-- **POST /run** - Submit new simulation job
-- **GET /jobs** - List all jobs
-- **GET /jobs/{job_id}** - Get specific job status
-
-### Submit Simulation
+Example job submission:
 
 ```bash
 curl -F cad_file=@solar_car.step \
@@ -296,242 +189,87 @@ curl -F cad_file=@solar_car.step \
      http://localhost:8000/run
 ```
 
-**Response:**
-```json
-{
-  "job_id": "abc123"
-}
-```
-
-### Check Job Status
+Polling job status:
 
 ```bash
-curl http://localhost:8000/jobs/abc123
-```
-
-**Response:**
-```json
-{
-  "job_id": "abc123",
-  "name": "AutoCFD run for TestRun",
-  "status": "running",
-  "logs": [
-    "Uploaded CAD to uploads/xyz.step",
-    "Geometry created with id=geom-123...",
-    "Mesh generation in progress..."
-  ],
-  "result": null,
-  "error": null,
-  "created_at": "2025-12-19T19:30:00Z"
-}
+curl http://localhost:8000/jobs/<job_id>
 ```
 
 ---
 
-## 🔍 Troubleshooting
+## Advanced Usage
 
-### Common Issues
+- **Custom surface mapping**: override inferred body/floor/farfield names via `body_surfaces`, `floor_surfaces`, and `farfield_surfaces` form fields.
+- **Farfield control**: adjust `farfield_multiplier`, add padding, or specify `farfield_center`.
+- **Crosswind and yaw**: pass `wind_direction="x,y,z"`; the pipeline normalizes it to compute the farfield vector while keeping the moving-floor speed constant.
+- **Rotating wheels**: enable `rotating_wheels=true` to auto-detect surfaces near the floor, or provide `wheel_surfaces` explicitly. The pipeline builds separate motion frames for front and rear wheels and excludes those surfaces from the body BC before computing forces.
 
-**Problem**: "Google Sheets is not configured"
-- **Solution**: Set `GOOGLE_SHEETS_CREDENTIALS` and `GOOGLE_SHEETS_SPREADSHEET_ID` in `.env`
-- Verify credentials file exists or JSON string is valid
-
-**Problem**: "Could not fetch forces: 'Simulation' object has no attribute 'list_output_values'"
-- **Solution**: This was fixed in the latest version. Make sure you're using the updated code.
-
-**Problem**: "Mesh generation failed"
-- **Solution**: Check CAD file quality. Ensure geometry is watertight and properly scaled.
-- Try increasing `mesh_max_size` or decreasing `mesh_min_size`
-
-**Problem**: "Simulation terminated with status FAILED"
-- **Solution**: Check Luminary Cloud logs at the URL provided in job output
-- Verify boundary conditions and physics settings in template
-
-**Problem**: Deployment fails with port error
-- **Solution**: Make sure you're using the latest Dockerfile that properly reads `$PORT`
-- Railway/Render set `$PORT` dynamically - don't hardcode it
-
-### Getting Help
-
-1. **Check Logs**:
-   - Local: Terminal output from `uvicorn`
-   - Deployed: Platform logs (Railway/Render dashboard)
-
-2. **Luminary Cloud Logs**:
-   - Click the simulation link in job output
-   - View detailed solver logs and convergence history
-
-3. **Google Sheets Issues**:
-   - Verify service account has Editor permissions on spreadsheet
-   - Check credentials JSON is valid
-   - See [GOOGLE_SHEETS_SETUP.md](GOOGLE_SHEETS_SETUP.md)
-
-4. **File Issues**:
-   - Check logs in deployment platform
-   - Use GitHub Issues for bug reports
+Refer to the comments in `app/luminary_pipeline.py` for implementation details and additional tuning options (boundary-layer parameters, adaptive meshing toggle, etc.).
 
 ---
 
-## 📁 Project Structure
+## Troubleshooting
+
+| Issue | Resolution |
+|-------|------------|
+| Sheets logging reports “not configured” | Ensure both `GOOGLE_SHEETS_CREDENTIALS` and `GOOGLE_SHEETS_SPREADSHEET_ID` are set and the service account has editor access. |
+| Meshing fails | Check CAD integrity (watertight, correct scale). Adjust `mesh_min_size`/`mesh_max_size` or simplify the geometry. |
+| Simulation stuck or fails | Review the Luminary log link included in the job log. Verify farfield size, boundary naming, and turbulence settings. |
+| Deployment port errors | Use the provided Dockerfile so the server listens on `$PORT`. Platforms such as Railway and Render set this dynamically. |
+| Force download errors | Ensure you’re running the current codebase; older versions attempted to read deprecated SDK attributes. |
+
+When debugging, inspect the running server logs (`uvicorn` output locally or platform logs in Railway/Render) and the per-job log in the dashboard. The pipeline also saves each generated simulation payload under `dumps/` for reproducibility.
+
+---
+
+## Project Structure
 
 ```
 autoCFD/
 ├── app/
-│   ├── main.py                 # FastAPI application
-│   ├── config.py               # Settings and environment variables
-│   ├── luminary_pipeline.py    # Core CFD automation logic
-│   ├── sheets_logger.py        # Google Sheets integration
-│   ├── backfill_sheets.py      # Historical data import
-│   ├── job_store.py            # In-memory job tracking
+│   ├── backfill_sheets.py
+│   ├── config.py
+│   ├── job_store.py
+│   ├── luminary_pipeline.py
+│   ├── main.py
+│   ├── sheets_logger.py
 │   └── templates/
-│       └── index.html          # Web dashboard
+│       └── index.html
 ├── data/
-│   └── base_simulation_params.json  # CFD template
+│   └── base_simulation_params.json
 ├── scripts/
 │   └── prepare_credentials_for_deployment.sh
-├── .env.example                # Environment template
-├── requirements.txt            # Python dependencies
-├── Dockerfile                  # Container configuration
-├── railway.json                # Railway deployment config
-├── render.yaml                 # Render deployment config
-├── DEPLOYMENT.md               # Full deployment guide
-├── QUICKSTART_DEPLOY.md        # Quick deployment guide
-├── GOOGLE_SHEETS_SETUP.md      # Sheets setup guide
-└── README.md                   # This file
+├── requirements.txt
+├── Dockerfile
+├── railway.json
+├── render.yaml
+├── DEPLOYMENT.md
+├── QUICKSTART_DEPLOY.md
+├── GOOGLE_SHEETS_SETUP.md
+└── README.md
 ```
 
 ---
 
-## 🛠️ Advanced Usage
+## Contributing
 
-### Custom Surface Mapping
+Contributions are welcome:
 
-If your CAD uses non-standard boundary names:
+1. Fork the repository.
+2. Create a feature branch.
+3. Make changes and add tests if applicable.
+4. Open a pull request describing the change and validation steps.
 
-```bash
-curl -F cad_file=@car.step \
-     -F cad_label="Custom" \
-     -F body_surfaces="body,shell,panel" \
-     -F floor_surfaces="ground,road" \
-     -F farfield_surfaces="domain,outer" \
-     http://localhost:8000/run
-```
-
-### Adjust Farfield Domain
-
-```bash
-# Larger farfield (50x instead of 25x)
--F farfield_multiplier=50.0
-
-# Add padding (meters)
--F farfield_padding=5.0
-
-# Override center point (x,y,z)
--F farfield_center="0,0,1.5"
-```
-
-### Custom Wind Direction
-
-```bash
-# Wind from side (45° angle)
--F wind_direction="0.707,0.707,0"
-
-# Wind from behind
--F wind_direction="-1,0,0"
-```
-
-### Rotating Wheels Configuration
-
-Enable rotating wheel simulation with automatic surface detection:
-
-```bash
-# Enable rotating wheels (auto-detect)
--F rotating_wheels=true
-```
-
-**How Auto-Detection Works:**
-- Detects surfaces in the wheel contact zone (z ∈ [0.0, 0.065] meters)
-- Floor is at z = -0.01m (bbox minimum - 0.001m)
-- Categorizes wheels into front/rear based on X-coordinate
-- Front wheels: higher X values (more positive)
-- Rear wheels: lower X values (closer to rear)
-
-**Manual Surface Override:**
-
-Specify exact wheel surface names if auto-detection fails:
-
-```bash
--F rotating_wheels=true \
--F wheel_surfaces="0/bound/BC_5,0/bound/BC_6,0/bound/BC_7,0/bound/BC_8"
-```
-
-**Wheel Motion Parameters:**
-- **Rotation Rate**: 110.2 rad/s around Y-axis (lateral rotation)
-- **Front Wheel Center**: (x=0, y=0, z=0.28) in global coordinates
-- **Rear Wheel Center**: (x=-2.679, y=0, z=0.28) in global coordinates
-- **Motion Formulation**: MRF (Moving Reference Frame) for steady-state
-- **Boundary Condition**: NO_SLIP on wheel surfaces
-
-**What Happens:**
-1. Wheel surfaces are automatically detected or use manual override
-2. Two rotating motion frames are created (front_wheels_frame, rear_wheels_frame)
-3. Wheels get separate boundary condition (excluded from car body BC)
-4. Simulation includes wheel rotation effects on aerodynamics
-
-**Example Log Output:**
-```
-Rotating wheels enabled - detecting wheel surfaces...
-Detected 4 wheel surfaces: ['0/bound/BC_5', '0/bound/BC_6', '0/bound/BC_7', '0/bound/BC_8']
-Front wheels: ['0/bound/BC_5', '0/bound/BC_6'], Rear: ['0/bound/BC_7', '0/bound/BC_8']
-```
+For bug reports or feature requests, file an issue with reproduction details and relevant logs.
 
 ---
 
-## 📈 Performance Notes
+## Resources
 
-- **Mesh Generation**: ~5-15 minutes depending on geometry complexity
-- **Simulation Runtime**: ~30-60 minutes for typical solar car (7500 iterations)
-- **Adaptive Refinement**: Targets 10M cells with automatic refinement
-- **Parallel Processing**: 2 concurrent jobs supported (configurable in `main.py`)
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
----
-
-## 📄 License
-
-This project uses the Luminary Cloud SDK and is subject to Luminary Cloud's terms of service.
-
----
-
-## 🔗 Resources
-
-- [Luminary Cloud API Documentation](https://app.luminarycloud.com/docs/api/reference)
+- [Luminary Cloud API Reference](https://app.luminarycloud.com/docs/api/reference)
 - [FastAPI Documentation](https://fastapi.tiangolo.com)
 - [Google Sheets API](https://developers.google.com/sheets/api)
-- [Railway Deployment](https://docs.railway.app)
-- [Render Deployment](https://render.com/docs)
+- [Railway Docs](https://docs.railway.app)
+- [Render Docs](https://render.com/docs)
 
----
-
-## 🙏 Acknowledgments
-
-Built with:
-- [Luminary Cloud](https://luminarycloud.com) - CFD simulation platform
-- [FastAPI](https://fastapi.tiangolo.com) - Web framework
-- [gspread](https://github.com/burnash/gspread) - Google Sheets integration
-
----
-
-**Questions?** Check the deployment guides or open an issue on GitHub.
-
-**Ready to deploy?** → [QUICKSTART_DEPLOY.md](QUICKSTART_DEPLOY.md)
+This project uses the Luminary Cloud SDK and adheres to Luminary’s terms of service.
