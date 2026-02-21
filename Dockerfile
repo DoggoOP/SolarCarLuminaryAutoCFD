@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     make \
     git \
     gcc \
+    g++ \
     libx11-dev \
     libxrandr-dev \
     libxinerama-dev \
