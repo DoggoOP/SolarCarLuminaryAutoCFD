@@ -103,22 +103,44 @@ option(SHELLPOWER_CLI_ONLY "Build only the headless CLI target (no GUI, no curl)
 # =============================================================================
 # Dependencies
 # =============================================================================
+include(FetchContent)
 
-# raylib is always needed: shellpower-cli uses raymath.h (header-only) from it.
-find_package(raylib QUIET)
-
-if(raylib_FOUND)
-    message(STATUS "Found system raylib: ${raylib_VERSION}")
-else()
-    message(STATUS "System raylib not found, fetching via Git...")
-    include(FetchContent)
+if(SHELLPOWER_CLI_ONLY)
+    # CLI only needs raymath.h (header-only). Populate the source tree without
+    # invoking raylib's own CMakeLists.txt so X11/OpenGL/GLFW are never required.
     FetchContent_Declare(
         raylib
         GIT_REPOSITORY https://github.com/raysan5/raylib.git
         GIT_TAG 5.5
         GIT_SHALLOW TRUE
     )
-    FetchContent_MakeAvailable(raylib)
+    FetchContent_GetProperties(raylib)
+    if(NOT raylib_POPULATED)
+        # Suppress CMP0169 deprecation warning (CMake 3.28+): we intentionally
+        # call FetchContent_Populate directly to avoid building raylib.
+        if(POLICY CMP0169)
+            cmake_policy(SET CMP0169 OLD)
+        endif()
+        FetchContent_Populate(raylib)
+    endif()
+    # Point the CLI include path directly at the downloaded headers.
+    set(RAYLIB_INCLUDE_DIR ${raylib_SOURCE_DIR}/src)
+    message(STATUS "CLI-only: using raylib headers from ${RAYLIB_INCLUDE_DIR}")
+else()
+    # Full GUI build: build raylib properly so the GUI executable can link it.
+    find_package(raylib QUIET)
+    if(raylib_FOUND)
+        message(STATUS "Found system raylib: ${raylib_VERSION}")
+    else()
+        message(STATUS "System raylib not found, fetching via Git...")
+        FetchContent_Declare(
+            raylib
+            GIT_REPOSITORY https://github.com/raysan5/raylib.git
+            GIT_TAG 5.5
+            GIT_SHALLOW TRUE
+        )
+        FetchContent_MakeAvailable(raylib)
+    endif()
 endif()
 
 if(NOT SHELLPOWER_CLI_ONLY)
@@ -231,9 +253,16 @@ target_include_directories(shellpower-cli PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core/simulation
     ${CMAKE_BINARY_DIR}/generated
-    # raymath.h is header-only and lives in the raylib source tree
-    $<TARGET_PROPERTY:raylib,INTERFACE_INCLUDE_DIRECTORIES>
 )
+
+# raymath.h include: bare source dir in CLI-only mode, raylib target otherwise
+if(SHELLPOWER_CLI_ONLY)
+    target_include_directories(shellpower-cli PRIVATE ${RAYLIB_INCLUDE_DIR})
+else()
+    target_include_directories(shellpower-cli PRIVATE
+        $<TARGET_PROPERTY:raylib,INTERFACE_INCLUDE_DIRECTORIES>
+    )
+endif()
 
 # Only math is needed — no OpenGL, no window, no curl
 if(WIN32)
