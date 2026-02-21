@@ -9,12 +9,6 @@ RUN apt-get update && apt-get install -y \
     git \
     gcc \
     g++ \
-    libx11-dev \
-    libxrandr-dev \
-    libxinerama-dev \
-    libxcursor-dev \
-    libxi-dev \
-    libgl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -27,6 +21,7 @@ COPY src/ ./src/
 RUN cmake -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=OFF \
+        -DSHELLPOWER_CLI_ONLY=ON \
     && cmake --build build --target shellpower-cli -j$(nproc)
 
 # =============================================================================

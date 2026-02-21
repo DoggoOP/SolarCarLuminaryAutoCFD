@@ -96,10 +96,15 @@ configure_file(
 )
 
 # =============================================================================
+# Build mode
+# =============================================================================
+option(SHELLPOWER_CLI_ONLY "Build only the headless CLI target (no GUI, no curl)" OFF)
+
+# =============================================================================
 # Dependencies
 # =============================================================================
 
-# Try to find system-installed raylib first (e.g., via Homebrew)
+# raylib is always needed: shellpower-cli uses raymath.h (header-only) from it.
 find_package(raylib QUIET)
 
 if(raylib_FOUND)
@@ -116,86 +121,96 @@ else()
     FetchContent_MakeAvailable(raylib)
 endif()
 
-# Try to find system-installed libcurl first
-find_package(CURL QUIET)
+if(NOT SHELLPOWER_CLI_ONLY)
+    # curl is only needed by the GUI auto-updater — skip it for CLI-only builds.
+    find_package(CURL QUIET)
 
-if(CURL_FOUND)
-    message(STATUS "Found system curl: ${CURL_VERSION_STRING}")
-    set(CURL_TARGET CURL::libcurl)
-else()
-    message(STATUS "System curl not found, fetching via Git...")
-    include(FetchContent)
-    FetchContent_Declare(
-        curl
-        GIT_REPOSITORY https://github.com/curl/curl.git
-        GIT_TAG curl-8_5_0
-        GIT_SHALLOW TRUE
-    )
-    # Configure curl build options
-    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(CURL_DISABLE_TESTS ON CACHE BOOL "" FORCE)
-    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-    # Use platform SSL
-    if(APPLE)
-        set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
-    elseif(WIN32)
-        set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    if(CURL_FOUND)
+        message(STATUS "Found system curl: ${CURL_VERSION_STRING}")
+        set(CURL_TARGET CURL::libcurl)
     else()
-        set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        message(STATUS "System curl not found, fetching via Git...")
+        include(FetchContent)
+        FetchContent_Declare(
+            curl
+            GIT_REPOSITORY https://github.com/curl/curl.git
+            GIT_TAG curl-8_5_0
+            GIT_SHALLOW TRUE
+        )
+        set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(CURL_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+        set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+        if(APPLE)
+            set(CURL_USE_SECTRANSP ON CACHE BOOL "" FORCE)
+        elseif(WIN32)
+            set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+        else()
+            set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+        endif()
+        FetchContent_MakeAvailable(curl)
+        set(CURL_TARGET libcurl)
     endif()
-    FetchContent_MakeAvailable(curl)
-    set(CURL_TARGET libcurl)
-endif()
 
-# Source files
-set(SOURCES
-    src/main.c
-    src/app.c
-    src/auto_layout.c
-    src/camera.c
-    src/stl_loader.c
-    src/gui.c
-    src/updater.c
-    src/lib/tinyfiledialogs.c
-    src/simulation/iv_trace.c
-    src/simulation/string_sim.c
-)
-
-# Executable
-add_executable(${PROJECT_NAME} ${SOURCES})
-
-# Include directories
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/simulation
-    ${CMAKE_BINARY_DIR}/generated
-)
-
-# Link raylib and curl
-target_link_libraries(${PROJECT_NAME} PRIVATE raylib ${CURL_TARGET})
-
-# Platform-specific settings
-if(WIN32)
-    # tinyfiledialogs requires Comdlg32 and Ole32 on Windows
-    target_link_libraries(${PROJECT_NAME} PRIVATE comdlg32 ole32)
-elseif(APPLE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        "-framework OpenGL"
-        "-framework Cocoa"
-        "-framework IOKit"
-        "-framework CoreVideo"
+    # --- GUI executable ---
+    set(SOURCES
+        src/main.c
+        src/app.c
+        src/auto_layout.c
+        src/camera.c
+        src/stl_loader.c
+        src/gui.c
+        src/updater.c
+        src/lib/tinyfiledialogs.c
+        src/simulation/iv_trace.c
+        src/simulation/string_sim.c
     )
-elseif(UNIX)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        GL
-        m
-        pthread
-        dl
-        rt
-        X11
+
+    add_executable(${PROJECT_NAME} ${SOURCES})
+
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/simulation
+        ${CMAKE_BINARY_DIR}/generated
     )
-endif()
+
+    target_link_libraries(${PROJECT_NAME} PRIVATE raylib ${CURL_TARGET})
+
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE comdlg32 ole32)
+    elseif(APPLE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            "-framework OpenGL"
+            "-framework Cocoa"
+            "-framework IOKit"
+            "-framework CoreVideo"
+        )
+    elseif(UNIX)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            GL m pthread dl rt X11
+        )
+    endif()
+
+    if(EXISTS ${CMAKE_SOURCE_DIR}/assets)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/assets
+            $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets
+        )
+    endif()
+
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE /W4)
+    else()
+        target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
+    endif()
+    if(WIN32)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE
+            WIN32_LEAN_AND_MEAN
+            _CRT_SECURE_NO_WARNINGS
+        )
+    endif()
+endif() # NOT SHELLPOWER_CLI_ONLY
 
 # =============================================================================
 # shellpower-cli — headless target (no Raylib window, no curl, no tinyfiledialogs)
@@ -236,24 +251,3 @@ if(WIN32)
     )
 endif()
 
-# Copy assets to build directory (only if assets directory exists)
-if(EXISTS ${CMAKE_SOURCE_DIR}/assets)
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets
-    )
-endif()
-
-# Compiler warnings (platform-specific)
-if(MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /W4)
-else()
-    target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra)
-endif()
-if(WIN32)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE
-        WIN32_LEAN_AND_MEAN
-        _CRT_SECURE_NO_WARNINGS
-    )
-endif()
