@@ -33,6 +33,18 @@ class Settings(BaseSettings):
         None, alias="GOOGLE_SHEETS_SPREADSHEET_ID"
     )
 
+    # Shellpower CLI integration (optional)
+    shellpower_cli_path: Optional[str] = Field(
+        None, alias="SHELLPOWER_CLI_PATH",
+        description="Path to shellpower-cli binary. Feature disabled if not set.",
+    )
+    shellpower_target_area: float = Field(
+        6.0, alias="SHELLPOWER_TARGET_AREA", description="Default target array area (m²)"
+    )
+    shellpower_enable_daily_sim: bool = Field(
+        True, alias="SHELLPOWER_ENABLE_DAILY_SIM"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

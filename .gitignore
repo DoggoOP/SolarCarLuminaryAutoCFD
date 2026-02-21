@@ -2,13 +2,16 @@
 .env
 .env.local
 .env.production
+
+# JSON files (secrets, dumps, credentials)
+# Exceptions: data templates, package manifests, deployment configs
 *.json
 !data/*.json
 !package.json
 !render.yaml
 !railway.json
 
-# Google service account credentials
+# Google service account credentials (belt-and-suspenders)
 SolarCarLuminaryBotIAMAdmin.json
 
 # Python
@@ -17,7 +20,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
 develop-eggs/
 dist/
 downloads/
@@ -39,17 +41,31 @@ ENV/
 env/
 .venv/
 
-# IDE
+# IDE / editor
 .vscode/
 .idea/
 *.swp
 *.swo
 .DS_Store
 
-# Project specific
+# C/C++ build artifacts
+build/
+compile_commands.json
+*.o
+*.a
+*.out
+
+# clangd language server cache (machine-specific index)
+.cache/
+
+# Project-specific uploads and output dumps
 uploads/*
 !uploads/.gitkeep
 dumps/
+
+# Scraped / downloaded API documentation HTML
+*.html
+!app/templates/*.html
 
 # Logs
 *.log
@@ -59,7 +75,3 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
-
-# Documentation (keep deployment docs)
-*.html
-!app/templates/*.html

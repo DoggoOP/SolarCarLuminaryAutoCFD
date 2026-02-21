@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 import gspread
+from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
 
 
@@ -35,6 +37,7 @@ class SheetsLogger:
         self.spreadsheet_id = spreadsheet_id
         self._client: Optional[gspread.Client] = None
         self._sheet: Optional[gspread.Worksheet] = None
+        self._creds: Optional[Credentials] = None
 
     def _connect(self) -> None:
         """Establish connection to Google Sheets."""
@@ -54,6 +57,7 @@ class SheetsLogger:
                     self.credentials_path,
                     scopes=self.SCOPES,
                 )
+            self._creds = creds
             self._client = gspread.authorize(creds)
 
         if self._sheet is None:
@@ -70,6 +74,37 @@ class SheetsLogger:
 
             # Initialize headers if this is a new sheet
             self._initialize_headers()
+
+    def _upload_image_to_drive(self, image_b64: str, filename: str) -> Optional[str]:
+        """Upload a base64-encoded PNG to Google Drive and return a public view URL.
+
+        Uses the Drive REST API via an AuthorizedSession so no extra packages are needed.
+        Returns None if the upload fails for any reason.
+        """
+        self._connect()
+        if self._creds is None:
+            return None
+        try:
+            session = AuthorizedSession(self._creds)
+            png_bytes = base64.b64decode(image_b64)
+            metadata = json.dumps({"name": filename, "mimeType": "image/png"})
+            resp = session.post(
+                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+                files={
+                    "metadata": ("metadata", metadata, "application/json"),
+                    "file": (filename, png_bytes, "image/png"),
+                },
+            )
+            resp.raise_for_status()
+            file_id = resp.json()["id"]
+            # Share with anyone who has the link (read-only)
+            session.post(
+                f"https://www.googleapis.com/drive/v3/files/{file_id}/permissions",
+                json={"role": "reader", "type": "anyone"},
+            )
+            return f"https://drive.google.com/uc?id={file_id}&export=view"
+        except Exception:
+            return None
 
     def _initialize_headers(self) -> None:
         """Set up column headers if sheet is empty."""
@@ -124,14 +159,19 @@ class SheetsLogger:
             # Convergence info
             "Convergence Status",
             "Max Iterations",
+            # Solar Array (Shellpower)
+            "Solar Cells Placed",
+            "Solar Peak Power (W)",
+            "Solar Daily Energy (Wh)",
+            "Solar Array Map",
             # Link
             "Luminary Link",
         ]
-        self._sheet.update("A1:AG1", [headers])
+        self._sheet.update("A1:AK1", [headers])
 
         # Format header row
         self._sheet.format(
-            "A1:AG1",
+            "A1:AK1",
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
@@ -149,6 +189,7 @@ class SheetsLogger:
         wind_direction: tuple,
         frontal_area: float,
         convergence_info: Dict[str, Any],
+        shellpower_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Append simulation results to the Google Sheet.
@@ -222,12 +263,34 @@ class SheetsLogger:
             # Convergence info
             convergence_info.get("status", "Unknown"),
             convergence_info.get("iterations", "N/A"),
+            # Solar Array (Shellpower)
+            shellpower_data.get("cells_placed", "N/A") if shellpower_data else "N/A",
+            shellpower_data.get("instant_power_w", "N/A") if shellpower_data else "N/A",
+            shellpower_data.get("daily_energy_wh", "N/A") if shellpower_data else "N/A",
+            self._make_array_map_formula(shellpower_data, simulation_id),
             # Link
             luminary_link,
         ]
 
         # Append the row
         self._sheet.append_row(row_data, value_input_option="USER_ENTERED")
+
+    def _make_array_map_formula(
+        self,
+        shellpower_data: Optional[Dict[str, Any]],
+        simulation_id: str,
+    ) -> str:
+        """Upload array map to Drive and return an =IMAGE() formula, or '' if unavailable."""
+        if not shellpower_data:
+            return ""
+        image_b64 = shellpower_data.get("array_map_b64")
+        if not image_b64:
+            return ""
+        filename = f"solar_array_{simulation_id[:8]}.png"
+        url = self._upload_image_to_drive(image_b64, filename)
+        if url:
+            return f'=IMAGE("{url}")'
+        return ""
 
     @staticmethod
     def is_enabled(settings=None) -> bool:

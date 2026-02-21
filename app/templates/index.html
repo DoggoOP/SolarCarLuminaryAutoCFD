@@ -193,6 +193,28 @@
         <input id="farfield_surfaces" name="farfield_surfaces" placeholder="0/bound/farfield" />
       </div>
       <div class="full">
+        <label for="shellpower_enabled">
+          <input id="shellpower_enabled" name="shellpower_enabled" type="checkbox" style="width:auto; margin-right: 0.5rem;" />
+          Solar Array Analysis (Shellpower)
+        </label>
+        <small>Run shellpower-cli after CFD to estimate solar array output. Requires SHELLPOWER_CLI_PATH env var.</small>
+      </div>
+      <div class="full" id="shellpower_options" style="display: none;">
+        <label for="shellpower_target_area">Target array area (m², optional)</label>
+        <input id="shellpower_target_area" name="shellpower_target_area" placeholder="6.0" />
+        <small>Leave blank to use server default (SHELLPOWER_TARGET_AREA).</small>
+        <div style="display:flex;gap:1rem;margin-top:0.5rem;">
+          <div style="flex:1;">
+            <label for="shellpower_lat">Latitude (°)</label>
+            <input id="shellpower_lat" name="shellpower_lat" type="number" step="any" value="-23.7" />
+          </div>
+          <div style="flex:1;">
+            <label for="shellpower_lon">Longitude (°)</label>
+            <input id="shellpower_lon" name="shellpower_lon" type="number" step="any" value="133.9" />
+          </div>
+        </div>
+      </div>
+      <div class="full">
         <button type="submit">Launch Simulation</button>
       </div>
     </form>
@@ -332,7 +354,31 @@
                           style="color:#059669;font-weight:600;">
                          📊 View in Results Spreadsheet →
                        </a>
-                     </p>` : ''}`
+                     </p>` : ''}
+                     ${job.result.shellpower_data ? (() => {
+                       const sp = job.result.shellpower_data;
+                       const cells = sp.cells_placed ?? '—';
+                       const power = sp.instant_power_w != null ? sp.instant_power_w.toFixed(1) + ' W' : '—';
+                       const energy = sp.daily_energy_wh != null ? sp.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
+                       const shaded = sp.shaded_pct != null ? sp.shaded_pct.toFixed(0) + '% shaded' : null;
+                       const sunAlt = sp.sun_altitude != null ? 'sun ' + sp.sun_altitude.toFixed(0) + '°' : null;
+                       const extras = [shaded, sunAlt].filter(Boolean).join(' · ');
+                       const mapImg = sp.array_map_b64
+                         ? `<img src="data:image/png;base64,${sp.array_map_b64}"
+                              style="width:100%;max-width:680px;margin-top:0.6rem;border-radius:6px;display:block;"
+                              alt="Solar array layout map" />`
+                         : '';
+                       return `<div style="margin-top:0.75rem;padding:0.75rem;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;">
+                         <strong>☀️ Solar Array (Shellpower)</strong>
+                         <p style="margin:0.25rem 0 0;font-size:0.9rem;">
+                           Cells: <strong>${cells}</strong> &nbsp;|&nbsp;
+                           Peak power: <strong>${power}</strong>
+                           ${energy ? ` &nbsp;|&nbsp; Daily energy: <strong>${energy}</strong>` : ''}
+                           ${extras ? `<br><span style="color:#6b7280;font-size:0.82rem;">${extras}</span>` : ''}
+                         </p>
+                         ${mapImg}
+                       </div>`;
+                     })() : ''}`
                   : ""
               }
               ${
@@ -354,6 +400,12 @@
       // Toggle wheel surfaces input visibility based on rotating wheels checkbox
       document.getElementById("rotating_wheels").addEventListener("change", (event) => {
         const container = document.getElementById("wheel_surfaces_container");
+        container.style.display = event.target.checked ? "block" : "none";
+      });
+
+      // Toggle Shellpower options visibility
+      document.getElementById("shellpower_enabled").addEventListener("change", (event) => {
+        const container = document.getElementById("shellpower_options");
         container.style.display = event.target.checked ? "block" : "none";
       });
     </script>

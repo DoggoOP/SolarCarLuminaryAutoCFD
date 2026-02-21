@@ -3,6 +3,9 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
+import subprocess
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -57,6 +60,12 @@ class CaseConfig:
     wheel_rotation_rate: float = 110.2
     front_wheel_center: Tuple[float, float, float] = (0.0, 0.0, 0.28)
     rear_wheel_center: Tuple[float, float, float] = (-2.679, 0.0, 0.28)
+    shellpower_enabled: bool = False
+    shellpower_target_area: Optional[float] = None  # None = use Settings default
+    shellpower_lat: float = -23.7
+    shellpower_lon: float = 133.9
+    shellpower_month: int = 8    # August — WSC race month
+    shellpower_day: int = 25     # August 25 — approximate WSC start
 
 
 class SimulationTemplateBuilder:
@@ -958,6 +967,108 @@ class LuminaryCFDPipeline:
         force_results["cd_a"] = cd * frontal_area  # Cd × frontal area
         force_results["cd_w"] = cd * wetted_area if wetted_area > 0 else 0  # Cd × wetted area
 
+        # Run Shellpower solar analysis if enabled
+        shellpower_data: Optional[dict] = None
+        if config.shellpower_enabled and self._settings.shellpower_cli_path:
+            callback("Running Shellpower solar analysis...")
+            with tempfile.TemporaryDirectory() as sp_tmp:
+                obj_path = Path(sp_tmp) / "shellpower_input.obj"
+                json_path = Path(sp_tmp) / "shellpower_result.json"
+                ok = self._export_shellpower_mesh(
+                    simulation=simulation,
+                    body_surfaces=body_surfaces,
+                    project=project,
+                    out_obj_path=obj_path,
+                    callback=callback,
+                )
+                if ok:
+                    target_area = (
+                        config.shellpower_target_area
+                        if config.shellpower_target_area is not None
+                        else self._settings.shellpower_target_area
+                    )
+                    cmd = [
+                        self._settings.shellpower_cli_path,
+                        "--mesh", str(obj_path),
+                        "--output", str(json_path),
+                        "--target-area", str(target_area),
+                        "--lat", str(config.shellpower_lat),
+                        "--lon", str(config.shellpower_lon),
+                        "--month", str(config.shellpower_month),
+                        "--day", str(config.shellpower_day),
+                        "--preset", "maxeon-gen7",
+                        "--grid-spacing", "0.13",
+                        "--time-samples", "12",
+                        "--sim-start-hour", "8",
+                        "--sim-end-hour", "17",
+                        "--heading-samples", "7",
+                        "--min-heading", "55",    # SSE in shellpower convention (90=south, +/-35deg)
+                        "--max-heading", "125",   # SSW in shellpower convention
+                    ]
+                    if self._settings.shellpower_enable_daily_sim:
+                        cmd.append("--daily-sim")
+                    try:
+                        proc = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=600,
+                        )
+                        if proc.returncode == 0 and json_path.exists():
+                            raw = json.loads(json_path.read_text())
+                            meta = raw.get("metadata", {})
+                            cells = meta.get("cell_count", 0)
+                            total_area_m2 = meta.get("total_area_m2")
+                            energy = raw.get("daily_energy", {}).get("total_energy_wh")
+                            peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
+                            shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
+                            # Use sun altitude at the moment of peak power (from daily sim),
+                            # falling back to the static noon snapshot if daily sim wasn't run.
+                            sun_alt = (
+                                raw.get("daily_energy", {}).get("sun_altitude_at_peak")
+                                or raw.get("instant_power", {}).get("sun_altitude")
+                            )
+                            layout = raw.get("layout", [])
+                            array_map_b64: Optional[str] = None
+                            if layout:
+                                try:
+                                    array_map_b64 = LuminaryCFDPipeline._generate_array_map(layout)
+                                except Exception as map_exc:
+                                    callback(f"Array map generation failed: {map_exc}")
+                            shellpower_data = {
+                                "cells_placed": cells,
+                                "total_area_m2": total_area_m2,
+                                "instant_power_w": peak_power,   # peak from daily sim
+                                "daily_energy_wh": energy,
+                                "shaded_pct": shaded_pct,
+                                "sun_altitude": sun_alt,
+                                "array_map_b64": array_map_b64,
+                            }
+                            msg = f"✓ Shellpower: {cells} cells"
+                            if total_area_m2 is not None:
+                                msg += f" ({total_area_m2:.2f} m²)"
+                            msg += f", peak {peak_power:.1f} W"
+                            if energy is not None:
+                                msg += f", {energy:.0f} Wh/day"
+                            if shaded_pct is not None:
+                                msg += f", {shaded_pct:.0f}% shaded"
+                            if sun_alt is not None:
+                                msg += f" (sun at peak: {sun_alt:.0f}°)"
+                            callback(msg)
+                        else:
+                            callback(
+                                f"Shellpower CLI failed (exit {proc.returncode}): "
+                                f"{proc.stderr.strip()[:200]}"
+                            )
+                    except subprocess.TimeoutExpired:
+                        callback("Shellpower CLI timed out (600 s)")
+                    except Exception as exc:
+                        callback(f"Shellpower CLI error: {exc}")
+                else:
+                    callback("Shellpower: mesh export failed, skipping CLI run")
+        elif config.shellpower_enabled:
+            callback("Shellpower enabled but SHELLPOWER_CLI_PATH not set — skipping")
+
         # Log results to Google Sheets if configured
         if self._sheets_logger:
             try:
@@ -975,6 +1086,7 @@ class LuminaryCFDPipeline:
                     wind_direction=config.farfield_direction,
                     frontal_area=frontal_area,
                     convergence_info=convergence_info,
+                    shellpower_data=shellpower_data,
                 )
                 callback("✓ Results logged to Google Sheets")
             except Exception as exc:
@@ -989,6 +1101,7 @@ class LuminaryCFDPipeline:
             "template_id": template.id,
             "status": status.name,
             "force_results": force_results,
+            "shellpower_data": shellpower_data,
         }
 
         # Log force values for visibility
@@ -1365,6 +1478,285 @@ class LuminaryCFDPipeline:
         except Exception as e:
             # If anything fails, return 0 to trigger fallback
             return 0.0
+
+    @staticmethod
+    def _generate_array_map(layout: List[dict]) -> Optional[str]:
+        """Generate a top-down solar array layout map and return as a base64-encoded PNG.
+
+        Returns None if matplotlib is unavailable or the layout is empty.
+        """
+        if not layout:
+            return None
+        try:
+            import base64
+            from io import BytesIO
+
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.patches as mpatches
+            import matplotlib.pyplot as plt
+        except ImportError:
+            return None
+
+        # Extract X (car length) and Z (car width) for a top-down view.
+        # Shellpower coords: X = forward, Y = up, Z = right.
+        xs = np.array([c["position"][0] for c in layout])
+        zs = np.array([c["position"][2] for c in layout])
+        normals_y = np.array([c["normal"][1] for c in layout])
+
+        cell_w, cell_h = 0.125, 0.125
+
+        fig, ax = plt.subplots(figsize=(11, 5))
+        fig.patch.set_facecolor("#111827")
+        ax.set_facecolor("#1f2937")
+
+        ny_min, ny_range = float(normals_y.min()), max(float(normals_y.max() - normals_y.min()), 1e-4)
+        for x, z, ny in zip(xs, zs, normals_y):
+            t = (ny - ny_min) / ny_range          # 0 = most tilted, 1 = flattest
+            color = (0.9 - 0.5 * t, 0.55 + 0.4 * t, 0.1)  # orange → green
+            rect = mpatches.FancyBboxPatch(
+                (x - cell_w / 2, z - cell_h / 2),
+                cell_w, cell_h,
+                boxstyle="square,pad=0",
+                facecolor=color,
+                edgecolor="#374151",
+                linewidth=0.4,
+            )
+            ax.add_patch(rect)
+
+        pad = 0.25
+        ax.set_xlim(xs.min() - pad, xs.max() + pad)
+        ax.set_ylim(zs.min() - pad, zs.max() + pad)
+        ax.set_aspect("equal")
+        ax.set_xlabel("Car Length →  (m)", color="#d1d5db", fontsize=10)
+        ax.set_ylabel("Car Width  (m)", color="#d1d5db", fontsize=10)
+        ax.set_title(f"Solar Array Layout — {len(layout)} cells", color="#f9fafb", fontsize=12, pad=8)
+        ax.tick_params(colors="#9ca3af")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#374151")
+        ax.grid(True, alpha=0.12, color="#6b7280")
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        buf.seek(0)
+        return base64.b64encode(buf.read()).decode("ascii")
+
+    @staticmethod
+    def _export_shellpower_mesh(
+        simulation: "lc.Simulation",
+        body_surfaces: List[str],
+        project: Any,
+        out_obj_path: "Path",
+        callback: "StatusCallback",
+    ) -> bool:
+        """
+        Download Luminary surface VTU (from the latest solution), filter to
+        car-body triangles only, apply coordinate transform, and write an OBJ
+        for shellpower-cli.
+
+        Coordinate transform maps Luminary (X_fwd, Y_side, Z_up) to
+        Shellpower (X_fwd, Y_up, Z_right):
+            new_x =  x
+            new_y =  z
+            new_z = -y
+        Vertices are then shifted so min(x)=0 and min(z)=0.
+
+        Parameters
+        ----------
+        simulation : lc.Simulation
+            Completed simulation — latest solution is used to download surface VTU.
+        body_surfaces : list of str
+            Luminary surface names to INCLUDE (e.g. "0/bound/car_body").
+            VTU files for any other surface (farfield, floor, wheels) are skipped.
+        project : lc.Project
+            Project object used to retrieve mesh metadata for index→name mapping.
+        out_obj_path : Path
+            Output path for the OBJ file.
+        callback : StatusCallback
+            Function to call with log messages.
+
+        Returns True on success, False on any failure (caller skips Shellpower).
+        """
+        try:
+            import meshio
+            import numpy as np
+        except ImportError as exc:
+            callback(f"Shellpower mesh export skipped (missing dependency): {exc}")
+            return False
+
+        # Build an index→boundary-name map from the mesh metadata so we can
+        # identify each numbered VTU file ("..._N_0.vtu") by its Luminary name.
+        # Falls back to an empty map (all files included) on any error.
+        index_to_name: dict = {}
+        try:
+            for m in project.list_meshes():
+                if m.id == simulation.mesh_id:
+                    meta = m.get_metadata()
+                    boundaries = meta.zones[0].boundaries
+                    # VTU files use 1-based surface indices (_1_0, _2_0, …)
+                    for i, b in enumerate(boundaries):
+                        index_to_name[i + 1] = b.name
+                    callback(
+                        f"Shellpower: mesh has {len(boundaries)} boundaries: "
+                        f"{[b.name for b in boundaries]}"
+                    )
+                    break
+        except Exception as exc:
+            callback(f"Shellpower: could not load mesh metadata ({exc}); will include all surfaces")
+
+        body_set = set(body_surfaces)
+
+        def _vtu_is_body(vtu_path: "Path") -> bool:
+            """Return True if this VTU file corresponds to a body surface."""
+            if not index_to_name:
+                # No metadata — include everything (old behaviour)
+                return True
+            # Extract the surface index from "…_sol-<uuid>_<N>_<M>.vtu"
+            stem = vtu_path.stem  # e.g. "surface_solution_sol-abc_5_0"
+            parts = stem.rsplit("_", 2)  # ["surface_solution_sol-abc", "5", "0"]
+            if len(parts) < 2:
+                return True  # Can't parse — include
+            try:
+                surf_idx = int(parts[-2])
+            except ValueError:
+                return True
+            name = index_to_name.get(surf_idx)
+            if name is None:
+                return True  # Index not in map — include to be safe
+            return name in body_set
+
+        # Get latest solution and download surface VTU tar
+        try:
+            solutions = simulation.list_solutions()
+            if not solutions:
+                callback("Shellpower mesh export: simulation has no solutions yet")
+                return False
+            solution = solutions[-1]
+            with tempfile.TemporaryDirectory() as tdir:
+                tdir_path = Path(tdir)
+                with solution.download_surface_data() as tf:
+                    tf.extractall(tdir_path)
+                vtu_files = sorted(tdir_path.rglob("*.vtu"))
+                if not vtu_files:
+                    callback("Shellpower mesh export: no VTU files in surface data download")
+                    return False
+
+                callback(f"Shellpower: VTU files in tar: {[f.stem for f in vtu_files]}")
+
+                all_points_list: list = []
+                all_tris_list: list = []
+                point_offset = 0
+
+                for vtu_file in vtu_files:
+                    if not _vtu_is_body(vtu_file):
+                        callback(f"Shellpower: excluding non-body surface {vtu_file.stem}")
+                        continue
+
+                    try:
+                        md = meshio.read(str(vtu_file))
+                    except Exception as exc:
+                        callback(f"Shellpower: skipping {vtu_file.name}: {exc}")
+                        continue
+
+                    pts = md.points
+
+                    g_idx = 0
+                    for blk in md.cells:
+                        for _, face in enumerate(blk.data):
+                            if blk.type == "triangle":
+                                all_tris_list.append(face + point_offset)
+                            g_idx += 1
+
+                    all_points_list.append(pts)
+                    point_offset += len(pts)
+
+        except Exception as exc:
+            callback(f"Shellpower mesh export failed (VTU download/read): {exc}")
+            return False
+
+        if not all_points_list or not all_tris_list:
+            callback("Shellpower mesh export: no triangles found after filtering")
+            return False
+
+        points = np.vstack(all_points_list)
+        triangles = all_tris_list
+
+        if not triangles:
+            callback("Shellpower mesh export: no triangles found after filtering")
+            return False
+
+        tris = np.array(triangles, dtype=np.int32)
+        callback(
+            f"Shellpower body mesh: {len(tris)} triangles, {len(points)} vertices"
+        )
+
+        # Coordinate transform: Luminary (X_fwd, Y_side, Z_up) -> Shellpower (X_fwd, Y_up, Z_right)
+        new_verts = np.empty_like(points)
+        new_verts[:, 0] =  points[:, 0]   # X stays
+        new_verts[:, 1] =  points[:, 2]   # Y_new = Z_luminary (up)
+        new_verts[:, 2] = -points[:, 1]   # Z_new = -Y_luminary
+
+        # Shift so min(x) = 0 and min(z) = 0
+        new_verts[:, 0] -= new_verts[:, 0].min()
+        new_verts[:, 2] -= new_verts[:, 2].min()
+
+        # Ensure face normals point outward from the mesh centroid.
+        # CFD surface meshes often have normals pointing into the fluid domain
+        # (away from the solid), but the VTU winding may be inverted relative
+        # to what the CLI cross-product expects.  For each face, if the computed
+        # normal points toward the centroid (inward), swap v1↔v2 to flip it.
+        centroid = new_verts.mean(axis=0)
+        v0 = new_verts[tris[:, 0]]
+        v1 = new_verts[tris[:, 1]]
+        v2 = new_verts[tris[:, 2]]
+        face_normals = np.cross(v1 - v0, v2 - v0)           # (N, 3)
+        face_centers = (v0 + v1 + v2) / 3.0
+        inward = np.sum(face_normals * (face_centers - centroid), axis=1) < 0
+        tris[inward] = tris[inward][:, [0, 2, 1]]            # flip winding
+        n_flipped = int(inward.sum())
+        if n_flipped:
+            callback(f"Shellpower: flipped {n_flipped} inward-facing triangles")
+
+        # Recompute normals after flip for diagnostics
+        v0d = new_verts[tris[:, 0]]
+        v1d = new_verts[tris[:, 1]]
+        v2d = new_verts[tris[:, 2]]
+        fn = np.cross(v1d - v0d, v2d - v0d)
+        fn_len = np.linalg.norm(fn, axis=1, keepdims=True)
+        fn_len = np.where(fn_len < 1e-10, 1.0, fn_len)
+        fn /= fn_len
+        ny = fn[:, 1]
+        callback(
+            f"Shellpower OBJ bounds: X=[{new_verts[:,0].min():.2f}, {new_verts[:,0].max():.2f}] "
+            f"Y=[{new_verts[:,1].min():.2f}, {new_verts[:,1].max():.2f}] "
+            f"Z=[{new_verts[:,2].min():.2f}, {new_verts[:,2].max():.2f}]"
+        )
+        callback(
+            f"Shellpower normal.y: min={ny.min():.3f} max={ny.max():.3f} "
+            f"faces_ny>0.5: {int((ny>0.5).sum())} "
+            f"faces_ny>0.883: {int((ny>0.883).sum())} "
+            f"faces_ny<0: {int((ny<0).sum())}"
+        )
+
+        # Write OBJ
+        out_obj_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with out_obj_path.open("w") as f:
+                f.write("# shellpower mesh export\n")
+                for v in new_verts:
+                    f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+                for tri in tris:
+                    f.write(f"f {tri[0]+1} {tri[1]+1} {tri[2]+1}\n")
+        except OSError as exc:
+            callback(f"Shellpower mesh export failed (write): {exc}")
+            return False
+
+        callback(
+            f"Shellpower OBJ exported: {out_obj_path.name} "
+            f"({len(tris)} triangles, {len(new_verts)} vertices)"
+        )
+        return True
 
     @staticmethod
     def _calculate_wetted_area(

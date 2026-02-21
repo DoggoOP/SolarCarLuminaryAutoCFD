@@ -10,3 +10,4 @@ vtk
 numpy
 meshio
 pandas
+matplotlib
