@@ -119,6 +119,10 @@ async def run_case(
     farfield_surfaces: str = Form(""),
     rotating_wheels: bool = Form(False),
     wheel_surfaces: str = Form(""),
+    shellpower_enabled: bool = Form(False),
+    shellpower_target_area: str = Form(""),
+    shellpower_lat: float = Form(-23.7),
+    shellpower_lon: float = Form(133.9),
 ) -> JSONResponse:
     global _last_submission_time  # noqa: PLW0603
     now = time.monotonic()
@@ -150,6 +154,8 @@ async def run_case(
     job_id = job_store.create(f"AutoCFD run for {cad_label}")
     job_store.append(job_id, f"Uploaded CAD to {upload_path}.")
 
+    shellpower_area_override = _parse_optional_float(shellpower_target_area)
+
     case_config = CaseConfig(
         cad_path=upload_path,
         cad_label=cad_label,
@@ -168,6 +174,10 @@ async def run_case(
         farfield_surfaces=farfield_surface_list or None,
         rotating_wheels=rotating_wheels,
         wheel_surfaces=wheel_surface_list or None,
+        shellpower_enabled=shellpower_enabled,
+        shellpower_target_area=shellpower_area_override,
+        shellpower_lat=shellpower_lat,
+        shellpower_lon=shellpower_lon,
     )
 
     def _log(message: str) -> None:

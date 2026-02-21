@@ -1,0 +1,9 @@
+CompileFlags:
+  Add:
+    - -std=c99
+    - -Isrc
+    - -Isrc/core
+    - -Isrc/core/simulation
+    - -I/Users/ethan.k/Desktop/CodingNStuff/python/luminaryCloud/autoCFD/build/generated
+    - -I/Users/ethan.k/Desktop/CodingNStuff/python/luminaryCloud/autoCFD/build/_deps/raylib-src/src
+    - -I/Users/ethan.k/Desktop/CodingNStuff/C/shellpowerplusplus/build/_deps/raylib-src/src
