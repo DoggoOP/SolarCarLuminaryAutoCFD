@@ -1012,7 +1012,7 @@ class LuminaryCFDPipeline:
                             cmd,
                             capture_output=True,
                             text=True,
-                            timeout=600,
+                            timeout=1500,
                         )
                         if proc.returncode == 0 and json_path.exists():
                             raw = json.loads(json_path.read_text())
