@@ -997,7 +997,7 @@ class LuminaryCFDPipeline:
                         "--month", str(config.shellpower_month),
                         "--day", str(config.shellpower_day),
                         "--preset", "maxeon-gen7",
-                        "--grid-spacing", "0.13",
+                        "--grid-spacing", "0.126",
                         "--time-samples", "12",
                         "--sim-start-hour", "8",
                         "--sim-end-hour", "17",
