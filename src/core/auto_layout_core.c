@@ -354,6 +354,7 @@ void CoreApp_InitAutoLayout(CoreAppState *app) {
     app->auto_layout.max_height            = 10.0f;
     app->auto_layout.use_grid_layout       = true;
     app->auto_layout.grid_spacing          = 0.0f;
+    app->auto_layout.edge_margin           = 0.035f;
     app->auto_layout_running               = false;
     app->auto_layout_progress              = 0;
 }
@@ -454,6 +455,20 @@ int CoreApp_RunAutoLayout(CoreAppState *app) {
         if (u > maxU) maxU = u;
         if (v < minV) minV = v;
         if (v > maxV) maxV = v;
+    }
+
+    float edge_margin = fmaxf(app->auto_layout.edge_margin, 0.0f);
+    if (edge_margin > 0.0f) {
+        float spanU = maxU - minU;
+        float spanV = maxV - minV;
+        if (spanU > edge_margin * 2.0f) {
+            minU += edge_margin;
+            maxU -= edge_margin;
+        }
+        if (spanV > edge_margin * 2.0f) {
+            minV += edge_margin;
+            maxV -= edge_margin;
+        }
     }
 
     int uStart = (int)floorf(minU / grid_spacing) - 1;

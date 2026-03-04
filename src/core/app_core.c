@@ -383,7 +383,7 @@ void CoreApp_ClearWiring(CoreAppState *app) {
 
 void CoreApp_InitSnap(CoreAppState *app) {
     app->snap.grid_snap_enabled  = false;
-    app->snap.grid_size          = 0.13f;
+    app->snap.grid_size          = 0.126f;
     app->snap.align_to_surface   = true;
     app->snap.show_grid          = false;
     app->snap.grid_origin        = (Vector3){0.0f, 0.0f, 0.0f};

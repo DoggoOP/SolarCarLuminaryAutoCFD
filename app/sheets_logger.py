@@ -160,18 +160,22 @@ class SheetsLogger:
             "Convergence Status",
             "Max Iterations",
             # Solar Array (Shellpower)
-            "Solar Cells Placed",
-            "Solar Peak Power (W)",
-            "Solar Daily Energy (Wh)",
-            "Solar Array Map",
+            "Solar Cells (Shadow-Aware)",
+            "Solar Peak Power (Shadow-Aware)",
+            "Solar Daily Energy (Shadow-Aware)",
+            "Solar Cells (Symmetric)",
+            "Solar Peak Power (Symmetric)",
+            "Solar Daily Energy (Symmetric)",
+            "Solar Array Map (Shadow-Aware)",
+            "Solar Array Map (Symmetric)",
             # Link
             "Luminary Link",
         ]
-        self._sheet.update("A1:AK1", [headers])
+        self._sheet.update("A1:AN1", [headers])
 
         # Format header row
         self._sheet.format(
-            "A1:AK1",
+            "A1:AN1",
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
@@ -217,6 +221,26 @@ class SheetsLogger:
 
         if self._sheet is None:
             raise RuntimeError("Failed to connect to Google Sheets")
+
+        # Extract shellpower variants when available
+        variants = (shellpower_data or {}).get("variants") if shellpower_data else None
+        shadow_variant: Optional[Dict[str, Any]] = None
+        symmetric_variant: Optional[Dict[str, Any]] = None
+        if isinstance(variants, list):
+            for variant in variants:
+                mode = variant.get("mode")
+                if mode == "shadow" and shadow_variant is None:
+                    shadow_variant = variant
+                elif mode == "no_shadow" and symmetric_variant is None:
+                    symmetric_variant = variant
+        if shellpower_data and shadow_variant is None:
+            shadow_variant = shellpower_data
+
+        def _shellpower_metric(source: Optional[Dict[str, Any]], key: str):
+            if not source:
+                return "N/A"
+            value = source.get(key)
+            return value if value is not None else "N/A"
 
         # Prepare row data
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -264,10 +288,14 @@ class SheetsLogger:
             convergence_info.get("status", "Unknown"),
             convergence_info.get("iterations", "N/A"),
             # Solar Array (Shellpower)
-            shellpower_data.get("cells_placed", "N/A") if shellpower_data else "N/A",
-            shellpower_data.get("instant_power_w", "N/A") if shellpower_data else "N/A",
-            shellpower_data.get("daily_energy_wh", "N/A") if shellpower_data else "N/A",
-            self._make_array_map_formula(shellpower_data, simulation_id),
+            _shellpower_metric(shadow_variant, "cells_placed"),
+            _shellpower_metric(shadow_variant, "instant_power_w"),
+            _shellpower_metric(shadow_variant, "daily_energy_wh"),
+            _shellpower_metric(symmetric_variant, "cells_placed"),
+            _shellpower_metric(symmetric_variant, "instant_power_w"),
+            _shellpower_metric(symmetric_variant, "daily_energy_wh"),
+            self._make_array_map_formula(shadow_variant, simulation_id, "shadow"),
+            self._make_array_map_formula(symmetric_variant, simulation_id, "sym"),
             # Link
             luminary_link,
         ]
@@ -277,16 +305,20 @@ class SheetsLogger:
 
     def _make_array_map_formula(
         self,
-        shellpower_data: Optional[Dict[str, Any]],
+        shellpower_source: Optional[Dict[str, Any]],
         simulation_id: str,
+        suffix: str = "",
     ) -> str:
         """Upload array map to Drive and return an =IMAGE() formula, or '' if unavailable."""
-        if not shellpower_data:
+        if not shellpower_source:
             return ""
-        image_b64 = shellpower_data.get("array_map_b64")
+        image_b64 = shellpower_source.get("array_map_b64")
         if not image_b64:
             return ""
-        filename = f"solar_array_{simulation_id[:8]}.png"
+        filename = f"solar_array_{simulation_id[:8]}"
+        if suffix:
+            filename += f"_{suffix}"
+        filename += ".png"
         url = self._upload_image_to_drive(image_b64, filename)
         if url:
             return f'=IMAGE("{url}")'

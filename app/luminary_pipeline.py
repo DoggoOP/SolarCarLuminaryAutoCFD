@@ -66,6 +66,7 @@ class CaseConfig:
     shellpower_lon: float = 133.9
     shellpower_month: int = 8    # August — WSC race month
     shellpower_day: int = 25     # August 25 — approximate WSC start
+    shellpower_dual_shadow: bool = False
 
 
 class SimulationTemplateBuilder:
@@ -973,7 +974,6 @@ class LuminaryCFDPipeline:
             callback("Running Shellpower solar analysis...")
             with tempfile.TemporaryDirectory() as sp_tmp:
                 obj_path = Path(sp_tmp) / "shellpower_input.obj"
-                json_path = Path(sp_tmp) / "shellpower_result.json"
                 ok = self._export_shellpower_mesh(
                     simulation=simulation,
                     body_surfaces=body_surfaces,
@@ -987,10 +987,9 @@ class LuminaryCFDPipeline:
                         if config.shellpower_target_area is not None
                         else self._settings.shellpower_target_area
                     )
-                    cmd = [
+                    base_cmd = [
                         self._settings.shellpower_cli_path,
                         "--mesh", str(obj_path),
-                        "--output", str(json_path),
                         "--target-area", str(target_area),
                         "--lat", str(config.shellpower_lat),
                         "--lon", str(config.shellpower_lon),
@@ -1006,64 +1005,116 @@ class LuminaryCFDPipeline:
                         "--max-heading", "125",   # SSW in shellpower convention
                     ]
                     if self._settings.shellpower_enable_daily_sim:
-                        cmd.append("--daily-sim")
-                    try:
-                        proc = subprocess.run(
-                            cmd,
-                            capture_output=True,
-                            text=True,
-                            timeout=1500,
-                        )
-                        if proc.returncode == 0 and json_path.exists():
-                            raw = json.loads(json_path.read_text())
-                            meta = raw.get("metadata", {})
-                            cells = meta.get("cell_count", 0)
-                            total_area_m2 = meta.get("total_area_m2")
-                            energy = raw.get("daily_energy", {}).get("total_energy_wh")
-                            peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
-                            shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
-                            # Use sun altitude at the moment of peak power (from daily sim),
-                            # falling back to the static noon snapshot if daily sim wasn't run.
-                            sun_alt = (
-                                raw.get("daily_energy", {}).get("sun_altitude_at_peak")
-                                or raw.get("instant_power", {}).get("sun_altitude")
-                            )
-                            layout = raw.get("layout", [])
-                            array_map_b64: Optional[str] = None
-                            if layout:
-                                try:
-                                    array_map_b64 = LuminaryCFDPipeline._generate_array_map(layout)
-                                except Exception as map_exc:
-                                    callback(f"Array map generation failed: {map_exc}")
-                            shellpower_data = {
-                                "cells_placed": cells,
-                                "total_area_m2": total_area_m2,
-                                "instant_power_w": peak_power,   # peak from daily sim
-                                "daily_energy_wh": energy,
-                                "shaded_pct": shaded_pct,
-                                "sun_altitude": sun_alt,
-                                "array_map_b64": array_map_b64,
+                        base_cmd.append("--daily-sim")
+
+                    run_variants = [
+                        {
+                            "key": "shadow",
+                            "label": "Shadow-aware",
+                            "mode": "shadow",
+                            "extra": [],
+                            "occlusion": True,
+                        }
+                    ]
+                    if config.shellpower_dual_shadow:
+                        run_variants.append(
+                            {
+                                "key": "no_shadow",
+                                "label": "Symmetric (no shadow)",
+                                "mode": "no_shadow",
+                                "extra": ["--no-occlusion-opt"],
+                                "occlusion": False,
                             }
-                            msg = f"✓ Shellpower: {cells} cells"
-                            if total_area_m2 is not None:
-                                msg += f" ({total_area_m2:.2f} m²)"
-                            msg += f", peak {peak_power:.1f} W"
-                            if energy is not None:
-                                msg += f", {energy:.0f} Wh/day"
-                            if shaded_pct is not None:
-                                msg += f", {shaded_pct:.0f}% shaded"
-                            if sun_alt is not None:
-                                msg += f" (sun at peak: {sun_alt:.0f}°)"
-                            callback(msg)
-                        else:
-                            callback(
-                                f"Shellpower CLI failed (exit {proc.returncode}): "
-                                f"{proc.stderr.strip()[:200]}"
+                        )
+
+                    shellpower_runs: List[Dict[str, Any]] = []
+                    for variant in run_variants:
+                        json_path = Path(sp_tmp) / f"shellpower_result_{variant['key']}.json"
+                        cmd = [*base_cmd, "--output", str(json_path), *variant["extra"]]
+                        try:
+                            proc = subprocess.run(
+                                cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=1500,
                             )
-                    except subprocess.TimeoutExpired:
-                        callback("Shellpower CLI timed out (600 s)")
-                    except Exception as exc:
-                        callback(f"Shellpower CLI error: {exc}")
+                        except subprocess.TimeoutExpired:
+                            callback(f"Shellpower ({variant['label']}) timed out (600 s)")
+                            continue
+                        except Exception as exc:  # pragma: no cover - unexpected CLI errors
+                            callback(f"Shellpower ({variant['label']}) error: {exc}")
+                            continue
+
+                        if proc.returncode != 0 or not json_path.exists():
+                            stderr_excerpt = (proc.stderr or "").strip()[:200]
+                            callback(
+                                f"Shellpower ({variant['label']}) failed (exit {proc.returncode}): "
+                                f"{stderr_excerpt}"
+                            )
+                            continue
+
+                        try:
+                            raw = json.loads(json_path.read_text())
+                        except Exception as exc:  # pragma: no cover - corrupted output
+                            callback(f"Shellpower ({variant['label']}) produced invalid JSON: {exc}")
+                            continue
+
+                        meta = raw.get("metadata", {})
+                        cells = meta.get("cell_count", 0)
+                        total_area_m2 = meta.get("total_area_m2")
+                        energy = raw.get("daily_energy", {}).get("total_energy_wh")
+                        peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
+                        shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
+                        sun_alt = (
+                            raw.get("daily_energy", {}).get("sun_altitude_at_peak")
+                            or raw.get("instant_power", {}).get("sun_altitude")
+                        )
+                        layout = raw.get("layout", [])
+                        array_map_b64: Optional[str] = None
+                        if layout:
+                            try:
+                                array_map_b64 = LuminaryCFDPipeline._generate_array_map(layout)
+                            except Exception as map_exc:  # pragma: no cover - plotting issues
+                                callback(f"Array map generation failed ({variant['label']}): {map_exc}")
+
+                        variant_result = {
+                            "mode": variant["mode"],
+                            "label": variant["label"],
+                            "occlusion_optimized": variant["occlusion"],
+                            "cells_placed": cells,
+                            "total_area_m2": total_area_m2,
+                            "instant_power_w": peak_power,
+                            "daily_energy_wh": energy,
+                            "shaded_pct": shaded_pct,
+                            "sun_altitude": sun_alt,
+                            "array_map_b64": array_map_b64,
+                        }
+                        shellpower_runs.append(variant_result)
+
+                        msg = f"✓ Shellpower ({variant['label']}): {cells} cells"
+                        if total_area_m2 is not None:
+                            msg += f" ({total_area_m2:.2f} m²)"
+                        msg += f", peak {peak_power:.1f} W"
+                        if energy is not None:
+                            msg += f", {energy:.0f} Wh/day"
+                        if shaded_pct is not None:
+                            msg += f", {shaded_pct:.0f}% shaded"
+                        if sun_alt is not None:
+                            msg += f" (sun at peak: {sun_alt:.0f}°)"
+                        callback(msg)
+
+                    if shellpower_runs:
+                        primary = shellpower_runs[0]
+                        shellpower_data = {
+                            "cells_placed": primary["cells_placed"],
+                            "total_area_m2": primary["total_area_m2"],
+                            "instant_power_w": primary["instant_power_w"],
+                            "daily_energy_wh": primary["daily_energy_wh"],
+                            "shaded_pct": primary["shaded_pct"],
+                            "sun_altitude": primary["sun_altitude"],
+                            "array_map_b64": primary["array_map_b64"],
+                            "variants": shellpower_runs,
+                        }
                 else:
                     callback("Shellpower: mesh export failed, skipping CLI run")
         elif config.shellpower_enabled:

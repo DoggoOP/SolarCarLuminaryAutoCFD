@@ -62,7 +62,7 @@ void DrawGUI(AppState *app) {
     if (app->selected_preset != prev_preset) {
         CellPreset *preset = (CellPreset *)&CELL_PRESETS[app->selected_preset];
         float cell_size = fmaxf(preset->width, preset->height);
-        app->snap.grid_size = cell_size + 0.002f;
+        app->snap.grid_size = cell_size + 0.001f;
     }
 
     // Vis mode dropdown (only after simulation)

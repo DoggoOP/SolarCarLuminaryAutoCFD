@@ -40,7 +40,7 @@ static void print_usage(const char *prog) {
         "  --rotate-z <float>      Z-axis rotation in degrees (default: 0)\n"
         "  --preset <name>         Cell preset: maxeon-gen3 | maxeon-gen5 | maxeon-gen7 | generic-silicon\n"
         "                          (default: maxeon-gen7)\n"
-        "  --grid-spacing <float>  Auto-layout grid spacing in m (default: 0.13)\n"
+        "  --grid-spacing <float>  Auto-layout grid spacing in m (default: 0.126)\n"
         "  --target-area <float>   Auto-layout target area in m^2 (default: 6.0)\n"
         "  --min-angle <float>     Min surface angle from horizontal (default: 62)\n"
         "  --max-angle <float>     Max surface angle from horizontal (default: 90)\n"
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
     float rotate_x           = 0.0f;
     float rotate_y           = 0.0f;
     float rotate_z           = 0.0f;
-    float grid_spacing       = 0.13f;
+    float grid_spacing       = 0.126f;
     float target_area        = 6.0f;
     float min_angle          = 62.0f;
     float max_angle          = 90.0f;
@@ -211,7 +211,7 @@ int main(int argc, char *argv[]) {
             preset_name = val; CONSUME_VAL();
         } else if (strcmp(arg, "--grid-spacing") == 0) {
             if (!val) { fprintf(stderr, "Error: --grid-spacing requires a float argument\n"); return 1; }
-            grid_spacing = parse_float(val, 0.13f); CONSUME_VAL();
+            grid_spacing = parse_float(val, 0.126f); CONSUME_VAL();
         } else if (strcmp(arg, "--target-area") == 0) {
             if (!val) { fprintf(stderr, "Error: --target-area requires a float argument\n"); return 1; }
             target_area = parse_float(val, 6.0f); CONSUME_VAL();

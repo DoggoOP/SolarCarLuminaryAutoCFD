@@ -113,7 +113,7 @@ Key options:
   --preset <name>         maxeon-gen3 | maxeon-gen5 | maxeon-gen7 | generic-silicon
                           (default: maxeon-gen7)
   --target-area <float>   Max cell area in m² (default: 6.0)
-  --grid-spacing <float>  Grid spacing in m (default: 0.13)
+  --grid-spacing <float>  Grid spacing in m (default: 0.126)
   --daily-sim             Run daily energy simulation
   --lat / --lon           Location (default: Alice Springs -23.7, 133.9)
   --month / --day         Date (default: 8/25 = WSC race start)
@@ -280,7 +280,7 @@ curl -F cad_file=@solar_car.step \
 |-------|------------|
 | Shellpower not running | Ensure `SHELLPOWER_CLI_PATH` points to the built binary and is executable. |
 | Shellpower CLI timed out | Large meshes can take >60 s; the timeout is 600 s. Check that `--target-area` is reasonable. |
-| Cell count seems off | The area limit uses actual cell size (0.125 m for Gen 7), not grid spacing (0.13 m). `384 × 0.125² = 6.00 m²`. |
+| Cell count seems off | The area limit uses actual cell size (0.125 m for Gen 7), not grid spacing (0.126 m). `384 × 0.125² = 6.00 m²`. |
 | Array still asymmetric | Some asymmetry is real — occlusion scoring detects genuine shadow from the cockpit. Use `--no-occlusion-opt` to compare with a shadow-unaware layout. |
 | Sheets logging reports "not configured" | Ensure both `GOOGLE_SHEETS_CREDENTIALS` and `GOOGLE_SHEETS_SPREADSHEET_ID` are set and the service account has Editor access. |
 | Meshing fails | Check CAD integrity (watertight, correct scale). Adjust `mesh_min_size`/`mesh_max_size` or simplify the geometry. |

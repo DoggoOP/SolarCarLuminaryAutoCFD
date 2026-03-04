@@ -124,6 +124,7 @@ typedef struct {
     float max_height;           /* Maximum height for cell placement */
     bool  use_grid_layout;      /* Use grid-based layout instead of mesh triangles */
     float grid_spacing;         /* Grid spacing for layout (0 = auto based on cell size) */
+    float edge_margin;          /* Minimum inset from shell boundary (meters) */
 } AutoLayoutSettings;
 
 /* Snap settings for cell placement */

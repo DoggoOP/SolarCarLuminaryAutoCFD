@@ -213,6 +213,16 @@
             <input id="shellpower_lon" name="shellpower_lon" type="number" step="any" value="133.9" />
           </div>
         </div>
+        <label for="shellpower_dual_shadow" style="display:flex;align-items:center;margin-top:0.75rem;">
+          <input
+            id="shellpower_dual_shadow"
+            name="shellpower_dual_shadow"
+            type="checkbox"
+            style="width:auto;margin-right:0.5rem;"
+          />
+          Compare layouts (shadow-aware vs symmetric)
+        </label>
+        <small style="display:block;margin-top:0.15rem;">Runs shellpower twice: once with occlusion scoring, once ignoring shadowing for a symmetric reference.</small>
       </div>
       <div class="full">
         <button type="submit">Launch Simulation</button>
@@ -363,10 +373,42 @@
                        const shaded = sp.shaded_pct != null ? sp.shaded_pct.toFixed(0) + '% shaded' : null;
                        const sunAlt = sp.sun_altitude != null ? 'sun ' + sp.sun_altitude.toFixed(0) + '°' : null;
                        const extras = [shaded, sunAlt].filter(Boolean).join(' · ');
-                       const mapImg = sp.array_map_b64
+                       const variants = Array.isArray(sp.variants) ? sp.variants : null;
+                       const hasComparison = variants && variants.length > 1;
+                       const mapImg = !hasComparison && sp.array_map_b64
                          ? `<img src="data:image/png;base64,${sp.array_map_b64}"
                               style="width:100%;max-width:680px;margin-top:0.6rem;border-radius:6px;display:block;"
                               alt="Solar array layout map" />`
+                         : '';
+                       const variantCards = hasComparison
+                         ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.75rem;margin-top:0.75rem;">
+                              ${variants.map((variant) => {
+                                  const varCells = variant.cells_placed ?? '—';
+                                  const varPower = variant.instant_power_w != null ? variant.instant_power_w.toFixed(1) + ' W' : '—';
+                                  const varEnergy = variant.daily_energy_wh != null ? variant.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
+                                  const varShaded = variant.shaded_pct != null ? variant.shaded_pct.toFixed(0) + '% shaded' : null;
+                                  const varSunAlt = variant.sun_altitude != null ? 'sun ' + variant.sun_altitude.toFixed(0) + '°' : null;
+                                  const varExtras = [varShaded, varSunAlt].filter(Boolean).join(' · ');
+                                  const varMap = variant.array_map_b64
+                                    ? `<img src="data:image/png;base64,${variant.array_map_b64}"
+                                         style="width:100%;border-radius:6px;margin-top:0.5rem;"
+                                         alt="${variant.label} layout map" />`
+                                    : '';
+                                  const modeBadge = variant.occlusion_optimized ? 'Shadow-aware' : 'No shadow';
+                                  return `<div style="background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:0.65rem;">
+                                    <strong>${variant.label}</strong>
+                                    <span style="display:inline-block;margin-left:0.35rem;font-size:0.75rem;padding:0.05rem 0.4rem;border-radius:0.35rem;background:#d1fae5;color:#064e3b;">
+                                      ${modeBadge}
+                                    </span>
+                                    <p style="margin:0.35rem 0 0;font-size:0.85rem;">
+                                      Cells: <strong>${varCells}</strong><br>
+                                      Peak power: <strong>${varPower}</strong>${varEnergy ? `<br>Daily energy: <strong>${varEnergy}</strong>` : ''}
+                                      ${varExtras ? `<br><span style="color:#6b7280;font-size:0.78rem;">${varExtras}</span>` : ''}
+                                    </p>
+                                    ${varMap}
+                                  </div>`;
+                                }).join('')}
+                            </div>`
                          : '';
                        return `<div style="margin-top:0.75rem;padding:0.75rem;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;">
                          <strong>☀️ Solar Array (Shellpower)</strong>
@@ -377,6 +419,7 @@
                            ${extras ? `<br><span style="color:#6b7280;font-size:0.82rem;">${extras}</span>` : ''}
                          </p>
                          ${mapImg}
+                         ${variantCards}
                        </div>`;
                      })() : ''}`
                   : ""

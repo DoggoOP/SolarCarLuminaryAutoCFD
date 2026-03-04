@@ -1371,10 +1371,10 @@ void DeleteModule(AppState *app, int module_index) {
 //------------------------------------------------------------------------------
 void InitSnap(AppState *app) {
     app->snap.grid_snap_enabled = false;
-    // Default grid size based on cell preset with small gap (2mm)
+    // Default grid size based on cell preset with small gap (1mm)
     CellPreset *preset = (CellPreset *)&CELL_PRESETS[app->selected_preset];
     float cell_size = fmaxf(preset->width, preset->height);
-    app->snap.grid_size = cell_size + 0.002f; // Cell size + 2mm gap
+    app->snap.grid_size = cell_size + 0.001f; // Cell size + 1mm gap
     app->snap.align_to_surface = true;
     app->snap.show_grid = false;
 
