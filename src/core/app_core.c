@@ -240,6 +240,8 @@ int CoreApp_PlaceCell(CoreAppState *app, Vector3 world_pos, Vector3 world_normal
     cell->power_output     = 0.0f;
     cell->current_output   = 0.0f;
     cell->voltage_output   = 0.0f;
+    cell->curvature_deg    = 0.0f;
+    cell->over_curvature_limit = false;
 
     app->cell_count++;
 

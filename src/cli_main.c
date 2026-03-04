@@ -44,6 +44,7 @@ static void print_usage(const char *prog) {
         "  --target-area <float>   Auto-layout target area in m^2 (default: 6.0)\n"
         "  --min-angle <float>     Min surface angle from horizontal (default: 62)\n"
         "  --max-angle <float>     Max surface angle from horizontal (default: 90)\n"
+        "  --ignore-curvature-limit Allow placement past curvature limit (mark in output)\n"
         "  --no-occlusion-opt      Disable occlusion-based placement scoring (place cells\n"
         "                          in spatial scan order instead of best-sun-first)\n"
         "  --daily-sim             Run daily energy simulation\n"
@@ -153,6 +154,7 @@ int main(int argc, char *argv[]) {
     float max_angle          = 90.0f;
     int   run_daily_sim      = 0;
     int   no_occlusion_opt   = 0;
+    int   ignore_curvature_limit = 0;
     float lat                = 37.4f;
     float lon                = -122.2f;
     int   month              = 6;
@@ -180,6 +182,10 @@ int main(int argc, char *argv[]) {
         }
         if (strcmp(arg, "--no-occlusion-opt") == 0) {
             no_occlusion_opt = 1;
+            continue;
+        }
+        if (strcmp(arg, "--ignore-curvature-limit") == 0) {
+            ignore_curvature_limit = 1;
             continue;
         }
 
@@ -304,6 +310,8 @@ int main(int argc, char *argv[]) {
     app.auto_layout.min_heading_deg   = min_heading;
     app.auto_layout.max_heading_deg   = max_heading;
     app.auto_layout.use_grid_layout   = 1;
+    if (ignore_curvature_limit)
+        app.auto_layout.ignore_curvature_limit = true;
     if (no_occlusion_opt)
         app.auto_layout.optimize_occlusion = false;
 
@@ -416,8 +424,18 @@ int main(int argc, char *argv[]) {
 
     const CellPreset *preset = &CORE_CELL_PRESETS[app.selected_preset];
 
-    /* Total cell area */
+    /* Total cell area and curvature stats */
     float total_area = (float)app.cell_count * preset->width * preset->height;
+    float max_curvature_deg = 0.0f;
+    int   curvature_violations = 0;
+    for (int i = 0; i < app.cell_count; i++) {
+        if (app.cells[i].curvature_deg > max_curvature_deg) {
+            max_curvature_deg = app.cells[i].curvature_deg;
+        }
+        if (app.cells[i].over_curvature_limit) {
+            curvature_violations++;
+        }
+    }
 
     fprintf(out, "{\n");
 
@@ -429,7 +447,13 @@ int main(int argc, char *argv[]) {
     fprintf(out, "    \"cell_width_m\": %.6g,\n",  (double)preset->width);
     fprintf(out, "    \"cell_height_m\": %.6g,\n", (double)preset->height);
     fprintf(out, "    \"cell_count\": %d,\n",       app.cell_count);
-    fprintf(out, "    \"total_area_m2\": %.6g\n",   (double)total_area);
+    fprintf(out, "    \"total_area_m2\": %.6g,\n",   (double)total_area);
+    fprintf(out, "    \"curvature_limit_deg\": %.6g,\n",
+            (double)app.auto_layout.surface_threshold);
+    fprintf(out, "    \"max_curvature_deg\": %.6g,\n", (double)max_curvature_deg);
+    fprintf(out, "    \"curvature_violations\": %d,\n", curvature_violations);
+    fprintf(out, "    \"curvature_limit_ignored\": %s\n",
+            app.auto_layout.ignore_curvature_limit ? "true" : "false");
     fprintf(out, "  },\n");
 
     /* --- layout --- */
@@ -438,16 +462,20 @@ int main(int argc, char *argv[]) {
         SolarCell *cell = &app.cells[i];
         Vector3 pos    = CoreApp_CellWorldPos(&app, cell);
         Vector3 nrm    = CoreApp_CellWorldNormal(&app, cell);
+        const char *curv_flag = cell->over_curvature_limit ? "true" : "false";
 
         fprintf(out,
             "    {\"id\":%d, \"position\":[%.6g,%.6g,%.6g], "
             "\"normal\":[%.6g,%.6g,%.6g], "
-            "\"string_id\":%d, \"order_in_string\":%d}",
+            "\"string_id\":%d, \"order_in_string\":%d, "
+            "\"curvature_deg\":%.6g, \"over_curvature_limit\":%s}",
             cell->id,
             (double)pos.x, (double)pos.y, (double)pos.z,
             (double)nrm.x, (double)nrm.y, (double)nrm.z,
             cell->string_id,
-            cell->order_in_string);
+            cell->order_in_string,
+            (double)cell->curvature_deg,
+            curv_flag);
 
         if (i < app.cell_count - 1)
             fprintf(out, ",");

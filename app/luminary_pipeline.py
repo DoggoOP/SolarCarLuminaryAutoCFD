@@ -67,6 +67,7 @@ class CaseConfig:
     shellpower_month: int = 8    # August — WSC race month
     shellpower_day: int = 25     # August 25 — approximate WSC start
     shellpower_dual_shadow: bool = False
+    shellpower_ignore_curvature_limit: bool = False
 
 
 class SimulationTemplateBuilder:
@@ -1006,6 +1007,8 @@ class LuminaryCFDPipeline:
                     ]
                     if self._settings.shellpower_enable_daily_sim:
                         base_cmd.append("--daily-sim")
+                    if config.shellpower_ignore_curvature_limit:
+                        base_cmd.append("--ignore-curvature-limit")
 
                     run_variants = [
                         {
@@ -1062,6 +1065,10 @@ class LuminaryCFDPipeline:
                         meta = raw.get("metadata", {})
                         cells = meta.get("cell_count", 0)
                         total_area_m2 = meta.get("total_area_m2")
+                        max_curvature = meta.get("max_curvature_deg")
+                        curvature_limit = meta.get("curvature_limit_deg")
+                        curvature_violations = meta.get("curvature_violations")
+                        curvature_limit_ignored = meta.get("curvature_limit_ignored")
                         energy = raw.get("daily_energy", {}).get("total_energy_wh")
                         peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
                         shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
@@ -1088,6 +1095,10 @@ class LuminaryCFDPipeline:
                             "shaded_pct": shaded_pct,
                             "sun_altitude": sun_alt,
                             "array_map_b64": array_map_b64,
+                            "max_curvature_deg": max_curvature,
+                            "curvature_limit_deg": curvature_limit,
+                            "curvature_violations": curvature_violations,
+                            "curvature_limit_ignored": curvature_limit_ignored,
                         }
                         shellpower_runs.append(variant_result)
 
@@ -1101,6 +1112,12 @@ class LuminaryCFDPipeline:
                             msg += f", {shaded_pct:.0f}% shaded"
                         if sun_alt is not None:
                             msg += f" (sun at peak: {sun_alt:.0f}°)"
+                        if max_curvature is not None:
+                            msg += f", max curvature {max_curvature:.1f}°"
+                            if curvature_limit and curvature_limit > 0:
+                                msg += f" (limit {curvature_limit:.1f}°)"
+                        if curvature_violations:
+                            msg += f", {curvature_violations} over limit"
                         callback(msg)
 
                     if shellpower_runs:
@@ -1113,6 +1130,10 @@ class LuminaryCFDPipeline:
                             "shaded_pct": primary["shaded_pct"],
                             "sun_altitude": primary["sun_altitude"],
                             "array_map_b64": primary["array_map_b64"],
+                            "max_curvature_deg": primary.get("max_curvature_deg"),
+                            "curvature_limit_deg": primary.get("curvature_limit_deg"),
+                            "curvature_violations": primary.get("curvature_violations"),
+                            "curvature_limit_ignored": primary.get("curvature_limit_ignored"),
                             "variants": shellpower_runs,
                         }
                 else:
@@ -1586,6 +1607,16 @@ class LuminaryCFDPipeline:
         for spine in ax.spines.values():
             spine.set_edgecolor("#374151")
         ax.grid(True, alpha=0.12, color="#6b7280")
+
+        flagged = [
+            (c["position"][0], c["position"][2])
+            for c in layout
+            if c.get("over_curvature_limit")
+        ]
+        if flagged:
+            fx, fz = zip(*flagged)
+            ax.scatter(fx, fz, s=28, color="#dc2626", edgecolors="#ffffff",
+                       linewidths=0.6, zorder=5)
 
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor())

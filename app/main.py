@@ -124,6 +124,7 @@ async def run_case(
     shellpower_lat: float = Form(-23.7),
     shellpower_lon: float = Form(133.9),
     shellpower_dual_shadow: bool = Form(False),
+    shellpower_ignore_curvature_limit: bool = Form(False),
 ) -> JSONResponse:
     global _last_submission_time  # noqa: PLW0603
     now = time.monotonic()
@@ -180,6 +181,7 @@ async def run_case(
         shellpower_lat=shellpower_lat,
         shellpower_lon=shellpower_lon,
         shellpower_dual_shadow=shellpower_dual_shadow,
+        shellpower_ignore_curvature_limit=shellpower_ignore_curvature_limit,
     )
 
     def _log(message: str) -> None:

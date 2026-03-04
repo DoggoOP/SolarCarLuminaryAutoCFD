@@ -114,6 +114,7 @@ Key options:
                           (default: maxeon-gen7)
   --target-area <float>   Max cell area in m² (default: 6.0)
   --grid-spacing <float>  Grid spacing in m (default: 0.126)
+  --ignore-curvature-limit Allow high-curvature placements (flagged in output)
   --daily-sim             Run daily energy simulation
   --lat / --lon           Location (default: Alice Springs -23.7, 133.9)
   --month / --day         Date (default: 8/25 = WSC race start)

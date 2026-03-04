@@ -78,6 +78,8 @@ typedef struct {
     float power_output; // Calculated during simulation
     float current_output; // Photo-generated current at current conditions
     float voltage_output; // Cell voltage at operating point
+    float curvature_deg; // Max local curvature angle
+    bool over_curvature_limit; // True if curvature exceeds limit
 } SolarCell;
 
 // A string of series-connected cells
@@ -148,6 +150,7 @@ typedef struct {
     bool use_grid_layout; // Use grid-based layout instead of mesh triangles
     float grid_spacing; // Grid spacing for layout (0 = auto based on cell size)
     float edge_margin; // Minimum inset from shell edge (meters)
+    bool ignore_curvature_limit; // Allow placement past curvature limit
 } AutoLayoutSettings;
 
 // Candidate position for auto-layout

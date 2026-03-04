@@ -490,7 +490,12 @@ int PlaceCellEx(AppState *app, Vector3 world_position, Vector3 world_normal, boo
     cell->order_in_string = -1;
     cell->has_bypass_diode = false;
     cell->is_shaded = false;
+    cell->is_bypassed = false;
     cell->power_output = 0;
+    cell->current_output = 0;
+    cell->voltage_output = 0;
+    cell->curvature_deg = 0.0f;
+    cell->over_curvature_limit = false;
 
     app->cell_count++;
 

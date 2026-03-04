@@ -24,6 +24,7 @@ void InitAutoLayout(AppState *app) {
     app->auto_layout.use_grid_layout = true;
     app->auto_layout.grid_spacing = 0.0f;
     app->auto_layout.edge_margin = 0.035f;
+    app->auto_layout.ignore_curvature_limit = false;
     app->auto_layout_running = false;
     app->auto_layout_progress = 0;
 }
@@ -78,6 +79,12 @@ bool IsCellFootprintValid(AppState *app, Vector3 position, Vector3 normal, float
     checkPoints[8] = Vector3Add(position, Vector3Negate(halfForward));
 
     float tolerance = 0.05f;
+    float cos_curvature_limit = -1.0f;
+    if (app->auto_layout.surface_threshold > 0.0f &&
+        app->auto_layout.surface_threshold < 180.0f) {
+        cos_curvature_limit =
+            cosf(app->auto_layout.surface_threshold * DEG2RAD);
+    }
 
     for (int i = 0; i < 9; i++) {
         Vector3 checkPos = checkPoints[i];
@@ -101,8 +108,10 @@ bool IsCellFootprintValid(AppState *app, Vector3 position, Vector3 normal, float
         }
 
         float normalDot = Vector3DotProduct(normal, hitDown.normal);
-        if (normalDot < 0.5f) {
-            return false;
+        if (cos_curvature_limit > -0.999f && normalDot < cos_curvature_limit) {
+            if (!app->auto_layout.ignore_curvature_limit) {
+                return false;
+            }
         }
 
         // Check for mesh geometry above this point

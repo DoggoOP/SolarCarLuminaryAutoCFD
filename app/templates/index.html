@@ -223,6 +223,16 @@
           Compare layouts (shadow-aware vs symmetric)
         </label>
         <small style="display:block;margin-top:0.15rem;">Runs shellpower twice: once with occlusion scoring, once ignoring shadowing for a symmetric reference.</small>
+        <label for="shellpower_ignore_curvature_limit" style="display:flex;align-items:center;margin-top:0.5rem;">
+          <input
+            id="shellpower_ignore_curvature_limit"
+            name="shellpower_ignore_curvature_limit"
+            type="checkbox"
+            style="width:auto;margin-right:0.5rem;"
+          />
+          Allow high-curvature placement (mark in output)
+        </label>
+        <small style="display:block;margin-top:0.15rem;">Ignores the curvature limit when placing cells and marks any over-limit cells with red dots in the layout map.</small>
       </div>
       <div class="full">
         <button type="submit">Launch Simulation</button>
@@ -372,7 +382,10 @@
                        const energy = sp.daily_energy_wh != null ? sp.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
                        const shaded = sp.shaded_pct != null ? sp.shaded_pct.toFixed(0) + '% shaded' : null;
                        const sunAlt = sp.sun_altitude != null ? 'sun ' + sp.sun_altitude.toFixed(0) + '°' : null;
-                       const extras = [shaded, sunAlt].filter(Boolean).join(' · ');
+                       const maxCurv = sp.max_curvature_deg != null ? 'max curvature ' + sp.max_curvature_deg.toFixed(1) + '°' : null;
+                       const curvLimit = sp.curvature_limit_deg != null ? 'limit ' + sp.curvature_limit_deg.toFixed(1) + '°' : null;
+                       const curvViolations = sp.curvature_violations ? `${sp.curvature_violations} over limit` : null;
+                       const extras = [shaded, sunAlt, maxCurv, curvLimit, curvViolations].filter(Boolean).join(' · ');
                        const variants = Array.isArray(sp.variants) ? sp.variants : null;
                        const hasComparison = variants && variants.length > 1;
                        const mapImg = !hasComparison && sp.array_map_b64
@@ -388,7 +401,10 @@
                                   const varEnergy = variant.daily_energy_wh != null ? variant.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
                                   const varShaded = variant.shaded_pct != null ? variant.shaded_pct.toFixed(0) + '% shaded' : null;
                                   const varSunAlt = variant.sun_altitude != null ? 'sun ' + variant.sun_altitude.toFixed(0) + '°' : null;
-                                  const varExtras = [varShaded, varSunAlt].filter(Boolean).join(' · ');
+                                  const varMaxCurv = variant.max_curvature_deg != null ? 'max curvature ' + variant.max_curvature_deg.toFixed(1) + '°' : null;
+                                  const varCurvLimit = variant.curvature_limit_deg != null ? 'limit ' + variant.curvature_limit_deg.toFixed(1) + '°' : null;
+                                  const varViolations = variant.curvature_violations ? `${variant.curvature_violations} over limit` : null;
+                                  const varExtras = [varShaded, varSunAlt, varMaxCurv, varCurvLimit, varViolations].filter(Boolean).join(' · ');
                                   const varMap = variant.array_map_b64
                                     ? `<img src="data:image/png;base64,${variant.array_map_b64}"
                                          style="width:100%;border-radius:6px;margin-top:0.5rem;"

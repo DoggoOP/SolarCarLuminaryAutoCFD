@@ -74,7 +74,7 @@ static bool IsPointOnMesh(CoreAppState *app, Vector3 position, float tolerance) 
 }
 
 static bool IsCellFootprintValid(CoreAppState *app, Vector3 position, Vector3 normal,
-                                  float cellWidth, float cellHeight) {
+                                 float cellWidth, float cellHeight) {
     if (!app->mesh_loaded)
         return false;
 
@@ -107,6 +107,12 @@ static bool IsCellFootprintValid(CoreAppState *app, Vector3 position, Vector3 no
     checkPoints[8] = Vector3Add(position, Vector3Negate(halfForward));
 
     float tolerance = 0.05f;
+    float cos_curvature_limit = -1.0f;
+    if (app->auto_layout.surface_threshold > 0.0f &&
+        app->auto_layout.surface_threshold < 180.0f) {
+        cos_curvature_limit =
+            cosf(app->auto_layout.surface_threshold * DEG2RAD);
+    }
 
     for (int i = 0; i < 9; i++) {
         Vector3 checkPos = checkPoints[i];
@@ -130,8 +136,10 @@ static bool IsCellFootprintValid(CoreAppState *app, Vector3 position, Vector3 no
         }
 
         float normalDot = Vector3DotProduct(normal, hitDown.normal);
-        if (normalDot < 0.5f) {
-            return false;
+        if (cos_curvature_limit > -0.999f && normalDot < cos_curvature_limit) {
+            if (!app->auto_layout.ignore_curvature_limit) {
+                return false;
+            }
         }
 
         /* Check for mesh geometry above this point */
@@ -148,6 +156,54 @@ static bool IsCellFootprintValid(CoreAppState *app, Vector3 position, Vector3 no
     }
 
     return true;
+}
+
+static float CoreAL_ComputeCurvature(CoreAppState *app, Vector3 position, Vector3 normal,
+                                     float cellWidth, float cellHeight) {
+    if (!app->mesh_loaded)
+        return 0.0f;
+
+    Vector3 right;
+    Vector3 ref = {0.0f, 0.0f, 1.0f};
+    right = Vector3CrossProduct(ref, normal);
+    if (Vector3Length(right) < 0.001f) {
+        ref = (Vector3){1.0f, 0.0f, 0.0f};
+        right = Vector3CrossProduct(ref, normal);
+    }
+    right = Vector3Normalize(right);
+    Vector3 forward = Vector3Normalize(Vector3CrossProduct(normal, right));
+
+    Vector3 halfRight   = Vector3Scale(right, cellWidth / 2.0f);
+    Vector3 halfForward = Vector3Scale(forward, cellHeight / 2.0f);
+
+    Vector3 checkPoints[9];
+    checkPoints[0] = position;
+    checkPoints[1] = Vector3Add(position, Vector3Add(halfRight, halfForward));
+    checkPoints[2] = Vector3Add(position, Vector3Add(Vector3Negate(halfRight), halfForward));
+    checkPoints[3] = Vector3Add(position, Vector3Add(halfRight, Vector3Negate(halfForward)));
+    checkPoints[4] = Vector3Add(position, Vector3Add(Vector3Negate(halfRight), Vector3Negate(halfForward)));
+    checkPoints[5] = Vector3Add(position, halfRight);
+    checkPoints[6] = Vector3Add(position, Vector3Negate(halfRight));
+    checkPoints[7] = Vector3Add(position, halfForward);
+    checkPoints[8] = Vector3Add(position, Vector3Negate(halfForward));
+
+    float max_angle = 0.0f;
+    for (int i = 0; i < 9; i++) {
+        Vector3 checkPos = checkPoints[i];
+        CoreRay rayDown;
+        rayDown.origin    = (Vector3){checkPos.x, app->mesh_bounds.max.y + 1.0f, checkPos.z};
+        rayDown.direction = (Vector3){0.0f, -1.0f, 0.0f};
+        CoreHit hitDown   = CoreMesh_Raycast(&app->core_mesh, rayDown);
+        if (!hitDown.hit)
+            continue;
+
+        float dot = Vector3DotProduct(normal, hitDown.normal);
+        dot = CoreAL_Clampf(dot, -1.0f, 1.0f);
+        float angle = acosf(dot) * RAD2DEG;
+        if (angle > max_angle)
+            max_angle = angle;
+    }
+    return max_angle;
 }
 
 static bool IsValidSurface(CoreAppState *app, Vector3 position, Vector3 normal) {
@@ -355,6 +411,7 @@ void CoreApp_InitAutoLayout(CoreAppState *app) {
     app->auto_layout.use_grid_layout       = true;
     app->auto_layout.grid_spacing          = 0.0f;
     app->auto_layout.edge_margin           = 0.035f;
+    app->auto_layout.ignore_curvature_limit = false;
     app->auto_layout_running               = false;
     app->auto_layout_progress              = 0;
 }
@@ -545,6 +602,16 @@ int CoreApp_RunAutoLayout(CoreAppState *app) {
         int id = CoreApp_PlaceCell(app, candidates[i].position, candidates[i].normal);
         if (id >= 0) {
             placed++;
+            if (app->cell_count > 0) {
+                SolarCell *cell = &app->cells[app->cell_count - 1];
+                float curvature = CoreAL_ComputeCurvature(app, candidates[i].position,
+                                                          candidates[i].normal,
+                                                          preset->width, preset->height);
+                cell->curvature_deg = curvature;
+                float limit = app->auto_layout.surface_threshold;
+                cell->over_curvature_limit =
+                    (limit > 0.0f && curvature > limit + 1e-3f);
+            }
         }
         if (target_cells > 0) {
             app->auto_layout_progress = 80 + (placed * 20) / target_cells;
