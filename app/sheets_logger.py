@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 import gspread
 from google.auth.transport.requests import AuthorizedSession
 from google.oauth2.service_account import Credentials
+from gspread.utils import rowcol_to_a1
 
 
 class SheetsLogger:
@@ -38,6 +39,58 @@ class SheetsLogger:
         self._client: Optional[gspread.Client] = None
         self._sheet: Optional[gspread.Worksheet] = None
         self._creds: Optional[Credentials] = None
+
+    HEADERS = [
+        # Simulation identification and parameters
+        "Timestamp",
+        "Job Name",
+        "Simulation ID",
+        "Wind Speed (m/s)",
+        "Wind Direction X",
+        "Wind Direction Y",
+        "Wind Direction Z",
+        "Frontal Area (m²)",
+        "Wetted Area (m²)",
+        # Drag results grouped together
+        "Drag Force (N)",
+        "Viscous Drag (N)",
+        "Pressure Drag (N)",
+        "Drag Coefficient (Cd)",
+        "CdA (Cd × Frontal Area)",
+        "CdW (Cd × Wetted Area)",
+        # Side force results
+        "Side Force (N)",
+        "Side Force Coefficient (Cy)",
+        # Lift force results
+        "Lift Force (N)",
+        "Lift Coefficient (Cz)",
+        # Center of pressure and force analysis
+        "CoP X (m)",
+        "CoP Y (m)",
+        "CoP Z (m)",
+        "Total Force Magnitude (N)",
+        "Force Direction X",
+        "Force Direction Y",
+        "Force Direction Z",
+        # Moments
+        "Moment X (N·m)",
+        "Moment Y (N·m)",
+        "Moment Z (N·m)",
+        # Convergence info
+        "Convergence Status",
+        "Max Iterations",
+        # Solar Array (Shellpower)
+        "Solar Cells (Shadow-Aware)",
+        "Solar Peak Power (Shadow-Aware)",
+        "Solar Daily Energy (Shadow-Aware)",
+        "Solar Cells (Symmetric)",
+        "Solar Peak Power (Symmetric)",
+        "Solar Daily Energy (Symmetric)",
+        "Solar Array Map (Shadow-Aware)",
+        "Solar Array Map (Symmetric)",
+        # Link
+        "Luminary Link",
+    ]
 
     def _connect(self) -> None:
         """Establish connection to Google Sheets."""
@@ -114,68 +167,23 @@ class SheetsLogger:
         # Check if headers already exist
         try:
             existing_headers = self._sheet.row_values(1)
-            if existing_headers and len(existing_headers) > 0:
-                return  # Headers already exist
+            headers_match = (
+                existing_headers
+                and len(existing_headers) == len(self.HEADERS)
+                and all(a == b for a, b in zip(existing_headers, self.HEADERS))
+            )
+            if headers_match:
+                return  # Headers already exist in the correct format
         except Exception:
             pass
 
-        # Set up headers - organized with parameters first, then grouped results
-        headers = [
-            # Simulation identification and parameters
-            "Timestamp",
-            "Job Name",
-            "Simulation ID",
-            "Wind Speed (m/s)",
-            "Wind Direction X",
-            "Wind Direction Y",
-            "Wind Direction Z",
-            "Frontal Area (m²)",
-            "Wetted Area (m²)",
-            # Drag results grouped together
-            "Drag Force (N)",
-            "Viscous Drag (N)",
-            "Pressure Drag (N)",
-            "Drag Coefficient (Cd)",
-            "CdA (Cd × Frontal Area)",
-            "CdW (Cd × Wetted Area)",
-            # Side force results
-            "Side Force (N)",
-            "Side Force Coefficient (Cy)",
-            # Lift force results
-            "Lift Force (N)",
-            "Lift Coefficient (Cz)",
-            # Center of pressure and force analysis
-            "CoP X (m)",
-            "CoP Y (m)",
-            "CoP Z (m)",
-            "Total Force Magnitude (N)",
-            "Force Direction X",
-            "Force Direction Y",
-            "Force Direction Z",
-            # Moments
-            "Moment X (N·m)",
-            "Moment Y (N·m)",
-            "Moment Z (N·m)",
-            # Convergence info
-            "Convergence Status",
-            "Max Iterations",
-            # Solar Array (Shellpower)
-            "Solar Cells (Shadow-Aware)",
-            "Solar Peak Power (Shadow-Aware)",
-            "Solar Daily Energy (Shadow-Aware)",
-            "Solar Cells (Symmetric)",
-            "Solar Peak Power (Symmetric)",
-            "Solar Daily Energy (Symmetric)",
-            "Solar Array Map (Shadow-Aware)",
-            "Solar Array Map (Symmetric)",
-            # Link
-            "Luminary Link",
-        ]
-        self._sheet.update("A1:AN1", [headers])
+        last_col_a1 = rowcol_to_a1(1, len(self.HEADERS))
+        header_range = f"A1:{last_col_a1}"
+        self._sheet.update(header_range, [self.HEADERS])
 
         # Format header row
         self._sheet.format(
-            "A1:AN1",
+            header_range,
             {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.2, "green": 0.3, "blue": 0.8},
