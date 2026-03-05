@@ -103,15 +103,15 @@ bool IsCellFootprintValid(AppState *app, Vector3 position, Vector3 normal, float
         float expectedY = position.y;
         float surfaceY = hitDown.point.y;
 
-        if (fabsf(surfaceY - expectedY) > tolerance * 2.0f) {
+        if (!app->auto_layout.ignore_curvature_limit &&
+            fabsf(surfaceY - expectedY) > tolerance * 2.0f) {
             return false;
         }
 
         float normalDot = Vector3DotProduct(normal, hitDown.normal);
-        if (cos_curvature_limit > -0.999f && normalDot < cos_curvature_limit) {
-            if (!app->auto_layout.ignore_curvature_limit) {
-                return false;
-            }
+        if (!app->auto_layout.ignore_curvature_limit &&
+            cos_curvature_limit > -0.999f && normalDot < cos_curvature_limit) {
+            return false;
         }
 
         // Check for mesh geometry above this point
