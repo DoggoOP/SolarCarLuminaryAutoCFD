@@ -309,7 +309,11 @@ class SheetsLogger:
         ]
 
         # Append the row
-        self._sheet.append_row(row_data, value_input_option="USER_ENTERED")
+        self._sheet.append_row(
+            row_data,
+            value_input_option="USER_ENTERED",
+            table_range="A1",
+        )
 
     def _make_array_map_formula(
         self,
