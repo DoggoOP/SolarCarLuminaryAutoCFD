@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>AutoArray Runner</title>
+    <style>
+      body {
+        font-family: Arial, Helvetica, sans-serif;
+        margin: 2rem;
+        background: #f8f8fb;
+        color: #1f2933;
+      }
+      h1 { margin-bottom: 0.25rem; }
+      form {
+        background: #fff;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        margin-bottom: 2rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+      }
+      label { font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 0.35rem; }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        padding: 0.45rem;
+        border: 1px solid #c5c9d2;
+        border-radius: 0.35rem;
+      }
+      .full { grid-column: 1 / -1; }
+      button {
+        padding: 0.65rem 1.25rem;
+        border: none;
+        border-radius: 0.35rem;
+        background: #4338ca;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.cancel-btn {
+        background: #dc2626;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.85rem;
+        margin-left: 0.75rem;
+      }
+      .jobs {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .job {
+        background: #fff;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+      }
+      .job pre {
+        background: #0f172a;
+        color: #f8fafc;
+        padding: 0.75rem;
+        border-radius: 0.35rem;
+        overflow-x: auto;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 0.75rem;
+        padding: 0.1rem 0.4rem;
+        border-radius: 0.25rem;
+        background: #e0e7ff;
+        color: #312e81;
+        margin-left: 0.5rem;
+      }
+      #result {
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border-radius: 0.5rem;
+        font-weight: 600;
+        background: #f0f9ff;
+        border-left: 4px solid #4338ca;
+      }
+      #result:empty { display: none; }
+      .nav a {
+        color: #4338ca;
+        font-weight: 600;
+        text-decoration: none;
+        margin-right: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="nav">
+      <a href="/">← AutoCFD</a>
+    </div>
+    <h1>AutoArray</h1>
+    <p>Upload an `STL`, `OBJ`, `STEP`, or `STP` file and run Shellpower automatically.</p>
+    <p style="color:#64748b; font-size:0.92rem;">`STL/OBJ` uploads are transformed from `X-forward/Z-up` into Shellpower coordinates and filtered to the top-shell `Y-up` band from `0.35 m` to `0.80 m`. AutoArray uses Shellpower defaults of `30°` min angle and `0.035 m` edge margin. `STEP/STP` uses Luminary meshing first, then exports a shellpower mesh.</p>
+
+    <form id="autoarray-form" enctype="multipart/form-data">
+      <div class="full">
+        <label for="cad_file">Geometry File</label>
+        <input id="cad_file" name="cad_file" type="file" accept=".stl,.obj,.step,.stp" required />
+      </div>
+      <div>
+        <label for="cad_label">Design label</label>
+        <input id="cad_label" name="cad_label" placeholder="solar_top_v1" required />
+      </div>
+      <div>
+        <label for="project_name">Project name</label>
+        <input id="project_name" name="project_name" value="{{ default_project }}" />
+      </div>
+      <div>
+        <label for="mesh_min_size">Mesh min size (STEP only)</label>
+        <input id="mesh_min_size" name="mesh_min_size" type="number" step="0.0001" value="0.002" />
+      </div>
+      <div>
+        <label for="mesh_max_size">Mesh max size (STEP only)</label>
+        <input id="mesh_max_size" name="mesh_max_size" type="number" step="0.0001" value="0.05" />
+      </div>
+      <div>
+        <label for="shellpower_target_area">Target array area (m²)</label>
+        <input id="shellpower_target_area" name="shellpower_target_area" placeholder="6.0" />
+      </div>
+      <div>
+        <label for="shellpower_lat">Latitude (°)</label>
+        <input id="shellpower_lat" name="shellpower_lat" type="number" step="any" value="-23.7" />
+      </div>
+      <div>
+        <label for="shellpower_lon">Longitude (°)</label>
+        <input id="shellpower_lon" name="shellpower_lon" type="number" step="any" value="133.9" />
+      </div>
+      <div class="full">
+        <label for="body_surfaces">Body surfaces (STEP only, optional)</label>
+        <input id="body_surfaces" name="body_surfaces" placeholder="0/bound/car_body,0/bound/top_shell" />
+      </div>
+      <div class="full">
+        <label for="shellpower_dual_shadow">
+          <input id="shellpower_dual_shadow" name="shellpower_dual_shadow" type="checkbox" style="width:auto; margin-right:0.5rem;" />
+          Compare layouts (shadow-aware vs symmetric)
+        </label>
+      </div>
+      <div class="full">
+        <label for="shellpower_ignore_curvature_limit">
+          <input id="shellpower_ignore_curvature_limit" name="shellpower_ignore_curvature_limit" type="checkbox" style="width:auto; margin-right:0.5rem;" />
+          Allow high-curvature placement (mark in output)
+        </label>
+      </div>
+      <div class="full">
+        <button type="submit">Run AutoArray</button>
+      </div>
+    </form>
+
+    <div id="result"></div>
+
+    <section>
+      <h2>AutoArray Jobs</h2>
+      <div class="jobs" id="jobs">
+        {% for job in jobs %}
+        <div class="job">
+          <h3>{{ job.title }} <span class="badge">{{ job.status }}</span></h3>
+          <pre>
+{% for entry in job.log -%}
+{{ entry.timestamp }} — {{ entry.message }}
+{% endfor -%}
+          </pre>
+        </div>
+        {% else %}
+        <p>No AutoArray jobs yet.</p>
+        {% endfor %}
+      </div>
+    </section>
+
+    <script>
+      const form = document.getElementById("autoarray-form");
+      const resultBox = document.getElementById("result");
+      const jobsBox = document.getElementById("jobs");
+      let latestJobId = null;
+
+      function renderShellpowerCard(sp) {
+        const cells = sp.cells_placed ?? '—';
+        const power = sp.instant_power_w != null ? sp.instant_power_w.toFixed(1) + ' W' : '—';
+        const energy = sp.daily_energy_wh != null ? sp.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
+        const shaded = sp.shaded_pct != null ? sp.shaded_pct.toFixed(0) + '% shaded' : null;
+        const sunAlt = sp.sun_altitude != null ? 'sun ' + sp.sun_altitude.toFixed(0) + '°' : null;
+        const maxCurv = sp.max_curvature_deg != null ? 'max curvature ' + sp.max_curvature_deg.toFixed(1) + '°' : null;
+        const curvLimit = sp.curvature_limit_deg != null ? 'limit ' + sp.curvature_limit_deg.toFixed(1) + '°' : null;
+        const curvViolations = sp.curvature_violations ? `${sp.curvature_violations} over limit` : null;
+        const extras = [shaded, sunAlt, maxCurv, curvLimit, curvViolations].filter(Boolean).join(' · ');
+        const variants = Array.isArray(sp.variants) ? sp.variants : null;
+        const hasComparison = variants && variants.length > 1;
+        const mapImg = !hasComparison && sp.array_map_b64
+          ? `<img src="data:image/png;base64,${sp.array_map_b64}" style="width:100%;max-width:680px;margin-top:0.6rem;border-radius:6px;display:block;" alt="Solar array layout map" />`
+          : '';
+        const variantCards = hasComparison
+          ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.75rem;margin-top:0.75rem;">${variants.map((variant) => {
+              const varCells = variant.cells_placed ?? '—';
+              const varPower = variant.instant_power_w != null ? variant.instant_power_w.toFixed(1) + ' W' : '—';
+              const varEnergy = variant.daily_energy_wh != null ? variant.daily_energy_wh.toFixed(0) + ' Wh/day' : null;
+              const varShaded = variant.shaded_pct != null ? variant.shaded_pct.toFixed(0) + '% shaded' : null;
+              const varSunAlt = variant.sun_altitude != null ? 'sun ' + variant.sun_altitude.toFixed(0) + '°' : null;
+              const varMaxCurv = variant.max_curvature_deg != null ? 'max curvature ' + variant.max_curvature_deg.toFixed(1) + '°' : null;
+              const varCurvLimit = variant.curvature_limit_deg != null ? 'limit ' + variant.curvature_limit_deg.toFixed(1) + '°' : null;
+              const varViolations = variant.curvature_violations ? `${variant.curvature_violations} over limit` : null;
+              const varExtras = [varShaded, varSunAlt, varMaxCurv, varCurvLimit, varViolations].filter(Boolean).join(' · ');
+              const varMap = variant.array_map_b64
+                ? `<img src="data:image/png;base64,${variant.array_map_b64}" style="width:100%;border-radius:6px;margin-top:0.5rem;" alt="${variant.label} layout map" />`
+                : '';
+              const modeBadge = variant.occlusion_optimized ? 'Shadow-aware' : 'No shadow';
+              return `<div style="background:#fff;border:1px solid #d1fae5;border-radius:6px;padding:0.65rem;"><strong>${variant.label}</strong><span style="display:inline-block;margin-left:0.35rem;font-size:0.75rem;padding:0.05rem 0.4rem;border-radius:0.35rem;background:#d1fae5;color:#064e3b;">${modeBadge}</span><p style="margin:0.35rem 0 0;font-size:0.85rem;">Cells: <strong>${varCells}</strong><br>Peak power: <strong>${varPower}</strong>${varEnergy ? `<br>Daily energy: <strong>${varEnergy}</strong>` : ''}${varExtras ? `<br><span style="color:#6b7280;font-size:0.78rem;">${varExtras}</span>` : ''}</p>${varMap}</div>`;
+            }).join('')}</div>`
+          : '';
+        return `<div style="margin-top:0.75rem;padding:0.75rem;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;"><strong>☀️ Solar Array (Shellpower)</strong><p style="margin:0.25rem 0 0;font-size:0.9rem;">Cells: <strong>${cells}</strong> &nbsp;|&nbsp; Peak power: <strong>${power}</strong>${energy ? ` &nbsp;|&nbsp; Daily energy: <strong>${energy}</strong>` : ''}${extras ? `<br><span style="color:#6b7280;font-size:0.82rem;">${extras}</span>` : ''}</p>${mapImg}${variantCards}</div>`;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(form);
+        resultBox.textContent = "Submitting …";
+        resultBox.style.color = "#4338ca";
+
+        const response = await fetch("/autoarray/run", { method: "POST", body: formData });
+        const payload = await response.json();
+        if (response.ok) {
+          latestJobId = payload.job_id;
+          resultBox.textContent = `✓ AutoArray job submitted: ${payload.job_id}`;
+          resultBox.style.color = "#059669";
+          await refreshJobs();
+          document.getElementById("jobs").scrollIntoView({ behavior: "smooth" });
+        } else {
+          resultBox.textContent = `✗ ${payload.detail || "Submission failed"}`;
+          resultBox.style.color = "#b91c1c";
+        }
+      });
+
+      async function cancelJob(jobId) {
+        if (!confirm('Are you sure you want to cancel this job?')) return;
+        const response = await fetch(`/jobs/${jobId}/cancel`, { method: 'POST' });
+        if (response.ok) await refreshJobs();
+      }
+
+      async function refreshJobs() {
+        const response = await fetch("/jobs");
+        if (!response.ok) return;
+        const jobs = (await response.json()).filter((job) => String(job.title || '').startsWith('AutoArray run for '));
+        jobsBox.innerHTML = jobs.map((job) => {
+          const isLatest = job.id === latestJobId;
+          const highlightStyle = isLatest ? 'border-left: 4px solid #4338ca;' : '';
+          const canCancel = job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled';
+          const cancelBtn = canCancel ? `<button class="cancel-btn" onclick="cancelJob('${job.id}')">Cancel</button>` : '';
+          const simulationLink = job.result && job.result.project_id && job.result.simulation_id
+            ? `<p><a href="https://app.luminarycloud.com/project/${job.result.project_id}/simulation/${job.result.simulation_id}" target="_blank" style="color:#4338ca;font-weight:600;">View Simulation in Luminary Cloud →</a></p>`
+            : '';
+          const shellpowerCard = job.result && job.result.shellpower_data ? renderShellpowerCard(job.result.shellpower_data) : '';
+          const inputName = job.result && job.result.input_filename ? `<p style="font-size:0.85rem;color:#64748b;">Input: ${job.result.input_filename}</p>` : '';
+          return `<div class="job" style="${highlightStyle}"><h3>${job.title}<span class="badge">${job.status}</span>${job.created_at ? `<small style="color:#64748b;font-weight:normal;margin-left:0.5rem;">${job.created_at}</small>` : ''}${cancelBtn}</h3>${simulationLink}${inputName}${shellpowerCard}${job.error ? `<p style="color:#b91c1c;">${job.error}</p>` : ''}<pre>${job.log.map((entry) => `${entry.timestamp} — ${entry.message}`).join("\n") || "No log entries yet."}</pre></div>`;
+        }).join("") || '<p>No AutoArray jobs yet.</p>';
+      }
+
+      setInterval(refreshJobs, 10000);
+    </script>
+  </body>
+</html>

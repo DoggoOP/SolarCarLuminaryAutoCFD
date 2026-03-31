@@ -108,6 +108,7 @@ void CoreApp_Init(CoreAppState *app) {
 
     app->sim_run      = false;
     app->time_sim_run = false;
+    app->ignore_shading = false;
 
     /* Auto-layout and snap */
     CoreApp_InitAutoLayout(app);
@@ -477,6 +478,7 @@ Vector3 CoreApp_CalcSunDirection(SimSettings *s, float *out_alt, float *out_az) 
  *--------------------------------------------------------------------------*/
 
 static bool CoreCheckCellShading(CoreAppState *app, SolarCell *cell, Vector3 sun_dir) {
+    if (app->ignore_shading) return false;
     if (!app->mesh_loaded) return false;
 
     Vector3 pos    = CoreApp_CellWorldPos(app, cell);
@@ -550,8 +552,12 @@ void CoreApp_RunStaticSim(CoreAppState *app) {
             cell->current_output = 0.0f;
             cell->voltage_output = 0.0f;
         } else {
-            cell->is_shaded = CoreCheckCellShading(app, cell,
-                                                   app->sim_results.sun_direction);
+            if (app->ignore_shading) {
+                cell->is_shaded = false;
+            } else {
+                cell->is_shaded = CoreCheckCellShading(app, cell,
+                                                       app->sim_results.sun_direction);
+            }
             Vector3 wn        = CoreApp_CellWorldNormal(app, cell);
             float cos_angle   = Vector3DotProduct(wn, app->sim_results.sun_direction);
             if (cos_angle < 0.0f) cos_angle = 0.0f;

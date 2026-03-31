@@ -44,6 +44,8 @@ static void print_usage(const char *prog) {
         "  --target-area <float>   Auto-layout target area in m^2 (default: 6.0)\n"
         "  --min-angle <float>     Min surface angle from horizontal (default: 62)\n"
         "  --max-angle <float>     Max surface angle from horizontal (default: 90)\n"
+        "  --edge-margin <float>   Keep this inset from shell edge in m (default: 0.035)\n"
+        "  --ignore-shading        Treat all cells as unshaded (symmetric layout)\n"
         "  --ignore-curvature-limit Allow placement past curvature limit (mark in output)\n"
         "  --no-occlusion-opt      Disable occlusion-based placement scoring (place cells\n"
         "                          in spatial scan order instead of best-sun-first)\n"
@@ -152,8 +154,10 @@ int main(int argc, char *argv[]) {
     float target_area        = 6.0f;
     float min_angle          = 62.0f;
     float max_angle          = 90.0f;
+    float edge_margin        = 0.035f;
     int   run_daily_sim      = 0;
     int   no_occlusion_opt   = 0;
+    int   ignore_shading     = 0;
     int   ignore_curvature_limit = 0;
     float lat                = 37.4f;
     float lon                = -122.2f;
@@ -182,6 +186,10 @@ int main(int argc, char *argv[]) {
         }
         if (strcmp(arg, "--no-occlusion-opt") == 0) {
             no_occlusion_opt = 1;
+            continue;
+        }
+        if (strcmp(arg, "--ignore-shading") == 0) {
+            ignore_shading = 1;
             continue;
         }
         if (strcmp(arg, "--ignore-curvature-limit") == 0) {
@@ -227,6 +235,9 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(arg, "--max-angle") == 0) {
             if (!val) { fprintf(stderr, "Error: --max-angle requires a float argument\n"); return 1; }
             max_angle = parse_float(val, 90.0f); CONSUME_VAL();
+        } else if (strcmp(arg, "--edge-margin") == 0) {
+            if (!val) { fprintf(stderr, "Error: --edge-margin requires a float argument\n"); return 1; }
+            edge_margin = parse_float(val, 0.035f); CONSUME_VAL();
         } else if (strcmp(arg, "--lat") == 0) {
             if (!val) { fprintf(stderr, "Error: --lat requires a float argument\n"); return 1; }
             lat = parse_float(val, 37.4f); CONSUME_VAL();
@@ -303,6 +314,7 @@ int main(int argc, char *argv[]) {
     app.auto_layout.target_area       = target_area;
     app.auto_layout.min_normal_angle  = min_angle;
     app.auto_layout.max_normal_angle  = max_angle;
+    app.auto_layout.edge_margin       = edge_margin;
     app.auto_layout.time_samples      = time_samples;
     app.auto_layout.sim_start_hour    = sim_start_hour;
     app.auto_layout.sim_end_hour      = sim_end_hour;
@@ -310,10 +322,13 @@ int main(int argc, char *argv[]) {
     app.auto_layout.min_heading_deg   = min_heading;
     app.auto_layout.max_heading_deg   = max_heading;
     app.auto_layout.use_grid_layout   = 1;
+    app.auto_layout.use_height_constraint = 0;
+    app.auto_layout.auto_detect_height    = 0;
     if (ignore_curvature_limit)
         app.auto_layout.ignore_curvature_limit = true;
     if (no_occlusion_opt)
         app.auto_layout.optimize_occlusion = false;
+    app.ignore_shading = ignore_shading;
 
     /* ----- Step 3: Load mesh ----- */
     fprintf(stderr, "Loading mesh: %s\n", mesh_path);

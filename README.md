@@ -113,8 +113,11 @@ Key options:
   --preset <name>         maxeon-gen3 | maxeon-gen5 | maxeon-gen7 | generic-silicon
                           (default: maxeon-gen7)
   --target-area <float>   Max cell area in m² (default: 6.0)
+  --min-angle <float>     Minimum surface angle from horizontal (default: 62)
+  --edge-margin <float>   Minimum shell edge inset in m (default: 0.035)
   --grid-spacing <float>  Grid spacing in m (default: 0.126)
   --ignore-curvature-limit Allow high-curvature placements (flagged in output)
+  --ignore-shading        Treat all cells as unshaded (symmetric layout)
   --daily-sim             Run daily energy simulation
   --lat / --lon           Location (default: Alice Springs -23.7, 133.9)
   --month / --day         Date (default: 8/25 = WSC race start)

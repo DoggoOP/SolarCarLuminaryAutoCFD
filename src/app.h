@@ -265,6 +265,7 @@ typedef struct {
     bool sim_run; // Has simulation been run?
     bool time_sim_run;
     TimeSimResults time_sim_results;
+    bool ignore_shading;
     CellVisMode vis_mode; // How to color cells after simulation
 
     // UI state

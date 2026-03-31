@@ -27,8 +27,6 @@ from .sheets_logger import SheetsLogger
 
 StatusCallback = Callable[[str], None]
 CancellationCheck = Callable[[], bool]
-
-
 def _set_vector(target: dict, vector: Tuple[float, float, float]) -> None:
     for axis, value in zip(("x", "y", "z"), vector):
         if value == 0:
@@ -36,6 +34,8 @@ def _set_vector(target: dict, vector: Tuple[float, float, float]) -> None:
             target[axis].pop("value", None)
         else:
             target.setdefault(axis, {})["value"] = value
+
+
 
 
 @dataclass
@@ -68,6 +68,27 @@ class CaseConfig:
     shellpower_day: int = 25     # August 25 — approximate WSC start
     shellpower_dual_shadow: bool = False
     shellpower_ignore_curvature_limit: bool = False
+    shellpower_min_angle: float = 62.0
+    shellpower_edge_margin: float = 0.035
+
+
+@dataclass
+class AutoArrayConfig:
+    cad_path: Path
+    cad_label: str
+    project_name: str
+    body_surfaces: Optional[Sequence[str]] = None
+    mesh_min_size: float = 0.002
+    mesh_max_size: float = 0.05
+    shellpower_target_area: Optional[float] = None
+    shellpower_lat: float = -23.7
+    shellpower_lon: float = 133.9
+    shellpower_month: int = 8
+    shellpower_day: int = 25
+    shellpower_dual_shadow: bool = False
+    shellpower_ignore_curvature_limit: bool = False
+    shellpower_min_angle: float = 30.0
+    shellpower_edge_margin: float = 0.035
 
 
 class SimulationTemplateBuilder:
@@ -448,11 +469,367 @@ class SimulationTemplateBuilder:
 class LuminaryCFDPipeline:
     """Encapsulates all Luminary Cloud API interactions for the AutoCFD flow."""
 
+    AUTOARRAY_TOP_SHELL_MIN_Y = 0.35
+    AUTOARRAY_TOP_SHELL_MAX_Y = 0.80
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._client: Optional[lc.Client] = None
         self._template_builder = SimulationTemplateBuilder(settings.base_sim_template_path)
         self._sheets_logger: Optional[SheetsLogger] = SheetsLogger.from_env()
+
+    def _run_shellpower_cli_for_mesh(
+        self,
+        mesh_path: Path,
+        callback: StatusCallback,
+        *,
+        target_area: Optional[float],
+        lat: float,
+        lon: float,
+        month: int,
+        day: int,
+        dual_shadow: bool,
+        ignore_curvature_limit: bool,
+        min_angle: float,
+        edge_margin: float,
+    ) -> Optional[dict]:
+        if not self._settings.shellpower_cli_path:
+            callback("Shellpower enabled but SHELLPOWER_CLI_PATH not set — skipping")
+            return None
+
+        resolved_target_area = (
+            target_area if target_area is not None else self._settings.shellpower_target_area
+        )
+
+        with tempfile.TemporaryDirectory() as sp_tmp:
+            base_cmd = [
+                self._settings.shellpower_cli_path,
+                "--mesh", str(mesh_path),
+                "--target-area", str(resolved_target_area),
+                "--min-angle", str(min_angle),
+                "--lat", str(lat),
+                "--lon", str(lon),
+                "--month", str(month),
+                "--day", str(day),
+                "--preset", "maxeon-gen7",
+                "--grid-spacing", "0.126",
+                "--time-samples", "12",
+                "--sim-start-hour", "8",
+                "--sim-end-hour", "17",
+                "--heading-samples", "7",
+                "--min-heading", "55",
+                "--max-heading", "125",
+                "--edge-margin", str(edge_margin),
+            ]
+            if self._settings.shellpower_enable_daily_sim:
+                base_cmd.append("--daily-sim")
+            if ignore_curvature_limit:
+                base_cmd.append("--ignore-curvature-limit")
+
+            run_variants = [
+                {
+                    "key": "shadow",
+                    "label": "Shadow-aware",
+                    "mode": "shadow",
+                    "extra": [],
+                    "occlusion": True,
+                }
+            ]
+            if dual_shadow:
+                run_variants.append(
+                    {
+                        "key": "no_shadow",
+                        "label": "Symmetric (no shadow)",
+                        "mode": "no_shadow",
+                        "extra": ["--no-occlusion-opt", "--ignore-shading"],
+                        "occlusion": False,
+                    }
+                )
+
+            shellpower_runs: List[Dict[str, Any]] = []
+            for variant in run_variants:
+                json_path = Path(sp_tmp) / f"shellpower_result_{variant['key']}.json"
+                cmd = [*base_cmd, "--output", str(json_path), *variant["extra"]]
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=1500,
+                    )
+                except subprocess.TimeoutExpired:
+                    callback(f"Shellpower ({variant['label']}) timed out (600 s)")
+                    continue
+                except Exception as exc:  # pragma: no cover
+                    callback(f"Shellpower ({variant['label']}) error: {exc}")
+                    continue
+
+                if proc.returncode != 0 or not json_path.exists():
+                    stderr_excerpt = (proc.stderr or "").strip()[:200]
+                    callback(
+                        f"Shellpower ({variant['label']}) failed (exit {proc.returncode}): "
+                        f"{stderr_excerpt}"
+                    )
+                    continue
+
+                try:
+                    raw = json.loads(json_path.read_text())
+                except Exception as exc:  # pragma: no cover
+                    callback(f"Shellpower ({variant['label']}) produced invalid JSON: {exc}")
+                    continue
+
+                meta = raw.get("metadata", {})
+                cells = meta.get("cell_count", 0)
+                total_area_m2 = meta.get("total_area_m2")
+                max_curvature = meta.get("max_curvature_deg")
+                curvature_limit = meta.get("curvature_limit_deg")
+                curvature_violations = meta.get("curvature_violations")
+                curvature_limit_ignored = meta.get("curvature_limit_ignored")
+                energy = raw.get("daily_energy", {}).get("total_energy_wh")
+                peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
+                shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
+                sun_alt = (
+                    raw.get("daily_energy", {}).get("sun_altitude_at_peak")
+                    or raw.get("instant_power", {}).get("sun_altitude")
+                )
+                layout = raw.get("layout", [])
+                array_map_b64: Optional[str] = None
+                if layout:
+                    try:
+                        array_map_b64 = LuminaryCFDPipeline._generate_array_map(layout)
+                    except Exception as map_exc:  # pragma: no cover
+                        callback(f"Array map generation failed ({variant['label']}): {map_exc}")
+
+                variant_result = {
+                    "mode": variant["mode"],
+                    "label": variant["label"],
+                    "occlusion_optimized": variant["occlusion"],
+                    "cells_placed": cells,
+                    "total_area_m2": total_area_m2,
+                    "instant_power_w": peak_power,
+                    "daily_energy_wh": energy,
+                    "shaded_pct": shaded_pct,
+                    "sun_altitude": sun_alt,
+                    "array_map_b64": array_map_b64,
+                    "max_curvature_deg": max_curvature,
+                    "curvature_limit_deg": curvature_limit,
+                    "curvature_violations": curvature_violations,
+                    "curvature_limit_ignored": curvature_limit_ignored,
+                }
+                shellpower_runs.append(variant_result)
+
+                msg = f"✓ Shellpower ({variant['label']}): {cells} cells"
+                if total_area_m2 is not None:
+                    msg += f" ({total_area_m2:.2f} m²)"
+                msg += f", peak {peak_power:.1f} W"
+                if energy is not None:
+                    msg += f", {energy:.0f} Wh/day"
+                if shaded_pct is not None:
+                    msg += f", {shaded_pct:.0f}% shaded"
+                if sun_alt is not None:
+                    msg += f" (sun at peak: {sun_alt:.0f}°)"
+                if max_curvature is not None:
+                    msg += f", max curvature {max_curvature:.1f}°"
+                    if curvature_limit and curvature_limit > 0:
+                        msg += f" (limit {curvature_limit:.1f}°)"
+                if curvature_violations:
+                    msg += f", {curvature_violations} over limit"
+                callback(msg)
+
+            if not shellpower_runs:
+                return None
+
+            primary = shellpower_runs[0]
+            return {
+                "cells_placed": primary["cells_placed"],
+                "total_area_m2": primary["total_area_m2"],
+                "instant_power_w": primary["instant_power_w"],
+                "daily_energy_wh": primary["daily_energy_wh"],
+                "shaded_pct": primary["shaded_pct"],
+                "sun_altitude": primary["sun_altitude"],
+                "array_map_b64": primary["array_map_b64"],
+                "max_curvature_deg": primary.get("max_curvature_deg"),
+                "curvature_limit_deg": primary.get("curvature_limit_deg"),
+                "curvature_violations": primary.get("curvature_violations"),
+                "curvature_limit_ignored": primary.get("curvature_limit_ignored"),
+                "variants": shellpower_runs,
+            }
+
+    @staticmethod
+    def _prepare_autoarray_mesh_for_shellpower(
+        input_mesh_path: Path,
+        output_obj_path: Path,
+        callback: StatusCallback,
+    ) -> Path:
+        try:
+            import meshio
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError(f"AutoArray mesh preprocessing requires meshio: {exc}") from exc
+
+        try:
+            mesh = meshio.read(str(input_mesh_path))
+        except Exception as exc:
+            raise RuntimeError(f"Failed to read uploaded mesh '{input_mesh_path.name}': {exc}") from exc
+
+        points = np.asarray(mesh.points)
+        if points.size == 0:
+            raise RuntimeError("Uploaded mesh contains no vertices")
+
+        triangles: List[np.ndarray] = []
+        for block in mesh.cells:
+            block_data = np.asarray(block.data)
+            if block.type == "triangle":
+                triangles.append(block_data)
+            elif block.type == "quad":
+                triangles.append(block_data[:, [0, 1, 2]])
+                triangles.append(block_data[:, [0, 2, 3]])
+
+        if not triangles:
+            raise RuntimeError("Uploaded mesh contains no triangle faces")
+
+        tris = np.vstack(triangles).astype(np.int32)
+
+        transformed = np.empty_like(points)
+        transformed[:, 0] = points[:, 0]
+        transformed[:, 1] = points[:, 2]
+        transformed[:, 2] = points[:, 1]
+
+        axis_labels = ("X", "Y", "Z")
+        axis_spans = transformed.max(axis=0) - transformed.min(axis=0)
+        scaled_axes: List[str] = []
+        for axis_index, span in enumerate(axis_spans):
+            if span > 50.0:
+                transformed[:, axis_index] /= 1000.0
+                scaled_axes.append(axis_labels[axis_index])
+        if scaled_axes:
+            callback(
+                "AutoArray unit normalization: scaled axes from mm to m for "
+                + ", ".join(scaled_axes)
+            )
+
+        min_y = LuminaryCFDPipeline.AUTOARRAY_TOP_SHELL_MIN_Y
+        max_y = LuminaryCFDPipeline.AUTOARRAY_TOP_SHELL_MAX_Y
+        tri_y = transformed[tris][:, :, 1]
+        tri_min_y = tri_y.min(axis=1)
+        tri_max_y = tri_y.max(axis=1)
+        keep_mask = (tri_max_y >= min_y) & (tri_min_y <= max_y)
+        kept_count = int(np.count_nonzero(keep_mask))
+        if kept_count == 0:
+            raise RuntimeError(
+                f"No triangles remain after top-shell filter {min_y:.2f}–{max_y:.2f} m in Y-up"
+            )
+
+        filtered_tris = tris[keep_mask]
+        used_vertices = np.unique(filtered_tris)
+        remap = np.zeros(len(transformed), dtype=np.int32)
+        remap[used_vertices] = np.arange(len(used_vertices), dtype=np.int32)
+        filtered_verts = transformed[used_vertices]
+        filtered_tris = remap[filtered_tris]
+
+        filtered_verts[:, 0] -= filtered_verts[:, 0].min()
+        filtered_verts[:, 2] -= filtered_verts[:, 2].min()
+
+        centroid = filtered_verts.mean(axis=0)
+        v0 = filtered_verts[filtered_tris[:, 0]]
+        v1 = filtered_verts[filtered_tris[:, 1]]
+        v2 = filtered_verts[filtered_tris[:, 2]]
+        face_normals = np.cross(v1 - v0, v2 - v0)
+        face_centers = (v0 + v1 + v2) / 3.0
+        inward = np.sum(face_normals * (face_centers - centroid), axis=1) < 0
+        filtered_tris[inward] = filtered_tris[inward][:, [0, 2, 1]]
+
+        output_obj_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_obj_path.open("w") as f:
+            f.write("# autoarray shellpower mesh export\n")
+            for vertex in filtered_verts:
+                f.write(f"v {vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n")
+            for tri in filtered_tris:
+                f.write(f"f {tri[0] + 1} {tri[1] + 1} {tri[2] + 1}\n")
+
+        callback(
+            "AutoArray mesh filter: "
+            f"{len(tris)} input triangles → {len(filtered_tris)} top-shell triangles "
+            f"using Y-up overlap window [{min_y:.2f}, {max_y:.2f}] m"
+        )
+        callback(
+            f"AutoArray filtered OBJ bounds: X=[{filtered_verts[:,0].min():.2f}, {filtered_verts[:,0].max():.2f}] "
+            f"Y=[{filtered_verts[:,1].min():.2f}, {filtered_verts[:,1].max():.2f}] "
+            f"Z=[{filtered_verts[:,2].min():.2f}, {filtered_verts[:,2].max():.2f}]"
+        )
+        return output_obj_path
+
+    def run_auto_array(
+        self,
+        config: AutoArrayConfig,
+        callback: StatusCallback,
+        check_cancelled: Optional[CancellationCheck] = None,
+    ) -> dict:
+        def _check_cancellation() -> None:
+            if check_cancelled and check_cancelled():
+                raise RuntimeError("Job cancelled by user")
+
+        suffix = config.cad_path.suffix.lower()
+        if suffix in {".stl", ".obj"}:
+            callback("Detected mesh input; filtering top shell and converting to Shellpower coordinates...")
+            with tempfile.TemporaryDirectory() as mesh_tmp:
+                filtered_obj_path = Path(mesh_tmp) / "autoarray_shellpower_input.obj"
+                prepared_mesh = self._prepare_autoarray_mesh_for_shellpower(
+                    config.cad_path,
+                    filtered_obj_path,
+                    callback,
+                )
+                shellpower_data = self._run_shellpower_cli_for_mesh(
+                    prepared_mesh,
+                    callback,
+                    target_area=config.shellpower_target_area,
+                    lat=config.shellpower_lat,
+                    lon=config.shellpower_lon,
+                    month=config.shellpower_month,
+                    day=config.shellpower_day,
+                    dual_shadow=config.shellpower_dual_shadow,
+                    ignore_curvature_limit=config.shellpower_ignore_curvature_limit,
+                    min_angle=config.shellpower_min_angle,
+                    edge_margin=config.shellpower_edge_margin,
+                )
+            if not shellpower_data:
+                raise RuntimeError("Shellpower did not produce results for the uploaded mesh")
+            return {
+                "input_filename": config.cad_path.name,
+                "shellpower_data": shellpower_data,
+            }
+
+        if suffix in {".step", ".stp"}:
+            callback("Detected STEP input; using Luminary meshing path before Shellpower...")
+            _check_cancellation()
+            case_config = CaseConfig(
+                cad_path=config.cad_path,
+                cad_label=config.cad_label,
+                project_name=config.project_name,
+                farfield_direction=(1.0, 0.0, 0.0),
+                farfield_speed=self._settings.default_farfield_speed,
+                mesh_min_size=config.mesh_min_size,
+                mesh_max_size=config.mesh_max_size,
+                body_surfaces=config.body_surfaces,
+                shellpower_enabled=True,
+                shellpower_target_area=config.shellpower_target_area,
+                shellpower_lat=config.shellpower_lat,
+                shellpower_lon=config.shellpower_lon,
+                shellpower_month=config.shellpower_month,
+                shellpower_day=config.shellpower_day,
+                shellpower_dual_shadow=config.shellpower_dual_shadow,
+                shellpower_ignore_curvature_limit=config.shellpower_ignore_curvature_limit,
+                shellpower_min_angle=config.shellpower_min_angle,
+                shellpower_edge_margin=config.shellpower_edge_margin,
+            )
+            result = self.run_case(case_config, callback, check_cancelled=check_cancelled)
+            return {
+                "project_id": result.get("project_id"),
+                "simulation_id": result.get("simulation_id"),
+                "input_filename": config.cad_path.name,
+                "shellpower_data": result.get("shellpower_data"),
+            }
+
+        raise RuntimeError("AutoArray supports STL, OBJ, STEP, and STP files")
 
     def _client_or_create(self) -> lc.Client:
         if not self._client:
@@ -983,159 +1360,19 @@ class LuminaryCFDPipeline:
                     callback=callback,
                 )
                 if ok:
-                    target_area = (
-                        config.shellpower_target_area
-                        if config.shellpower_target_area is not None
-                        else self._settings.shellpower_target_area
+                    shellpower_data = self._run_shellpower_cli_for_mesh(
+                        obj_path,
+                        callback,
+                        target_area=config.shellpower_target_area,
+                        lat=config.shellpower_lat,
+                        lon=config.shellpower_lon,
+                        month=config.shellpower_month,
+                        day=config.shellpower_day,
+                        dual_shadow=config.shellpower_dual_shadow,
+                        ignore_curvature_limit=config.shellpower_ignore_curvature_limit,
+                        min_angle=config.shellpower_min_angle,
+                        edge_margin=config.shellpower_edge_margin,
                     )
-                    base_cmd = [
-                        self._settings.shellpower_cli_path,
-                        "--mesh", str(obj_path),
-                        "--target-area", str(target_area),
-                        "--lat", str(config.shellpower_lat),
-                        "--lon", str(config.shellpower_lon),
-                        "--month", str(config.shellpower_month),
-                        "--day", str(config.shellpower_day),
-                        "--preset", "maxeon-gen7",
-                        "--grid-spacing", "0.126",
-                        "--time-samples", "12",
-                        "--sim-start-hour", "8",
-                        "--sim-end-hour", "17",
-                        "--heading-samples", "7",
-                        "--min-heading", "55",    # SSE in shellpower convention (90=south, +/-35deg)
-                        "--max-heading", "125",   # SSW in shellpower convention
-                    ]
-                    if self._settings.shellpower_enable_daily_sim:
-                        base_cmd.append("--daily-sim")
-                    if config.shellpower_ignore_curvature_limit:
-                        base_cmd.append("--ignore-curvature-limit")
-
-                    run_variants = [
-                        {
-                            "key": "shadow",
-                            "label": "Shadow-aware",
-                            "mode": "shadow",
-                            "extra": [],
-                            "occlusion": True,
-                        }
-                    ]
-                    if config.shellpower_dual_shadow:
-                        run_variants.append(
-                            {
-                                "key": "no_shadow",
-                                "label": "Symmetric (no shadow)",
-                                "mode": "no_shadow",
-                                "extra": ["--no-occlusion-opt"],
-                                "occlusion": False,
-                            }
-                        )
-
-                    shellpower_runs: List[Dict[str, Any]] = []
-                    for variant in run_variants:
-                        json_path = Path(sp_tmp) / f"shellpower_result_{variant['key']}.json"
-                        cmd = [*base_cmd, "--output", str(json_path), *variant["extra"]]
-                        try:
-                            proc = subprocess.run(
-                                cmd,
-                                capture_output=True,
-                                text=True,
-                                timeout=1500,
-                            )
-                        except subprocess.TimeoutExpired:
-                            callback(f"Shellpower ({variant['label']}) timed out (600 s)")
-                            continue
-                        except Exception as exc:  # pragma: no cover - unexpected CLI errors
-                            callback(f"Shellpower ({variant['label']}) error: {exc}")
-                            continue
-
-                        if proc.returncode != 0 or not json_path.exists():
-                            stderr_excerpt = (proc.stderr or "").strip()[:200]
-                            callback(
-                                f"Shellpower ({variant['label']}) failed (exit {proc.returncode}): "
-                                f"{stderr_excerpt}"
-                            )
-                            continue
-
-                        try:
-                            raw = json.loads(json_path.read_text())
-                        except Exception as exc:  # pragma: no cover - corrupted output
-                            callback(f"Shellpower ({variant['label']}) produced invalid JSON: {exc}")
-                            continue
-
-                        meta = raw.get("metadata", {})
-                        cells = meta.get("cell_count", 0)
-                        total_area_m2 = meta.get("total_area_m2")
-                        max_curvature = meta.get("max_curvature_deg")
-                        curvature_limit = meta.get("curvature_limit_deg")
-                        curvature_violations = meta.get("curvature_violations")
-                        curvature_limit_ignored = meta.get("curvature_limit_ignored")
-                        energy = raw.get("daily_energy", {}).get("total_energy_wh")
-                        peak_power = raw.get("daily_energy", {}).get("peak_power_w", 0.0)
-                        shaded_pct = raw.get("instant_power", {}).get("shaded_pct")
-                        sun_alt = (
-                            raw.get("daily_energy", {}).get("sun_altitude_at_peak")
-                            or raw.get("instant_power", {}).get("sun_altitude")
-                        )
-                        layout = raw.get("layout", [])
-                        array_map_b64: Optional[str] = None
-                        if layout:
-                            try:
-                                array_map_b64 = LuminaryCFDPipeline._generate_array_map(layout)
-                            except Exception as map_exc:  # pragma: no cover - plotting issues
-                                callback(f"Array map generation failed ({variant['label']}): {map_exc}")
-
-                        variant_result = {
-                            "mode": variant["mode"],
-                            "label": variant["label"],
-                            "occlusion_optimized": variant["occlusion"],
-                            "cells_placed": cells,
-                            "total_area_m2": total_area_m2,
-                            "instant_power_w": peak_power,
-                            "daily_energy_wh": energy,
-                            "shaded_pct": shaded_pct,
-                            "sun_altitude": sun_alt,
-                            "array_map_b64": array_map_b64,
-                            "max_curvature_deg": max_curvature,
-                            "curvature_limit_deg": curvature_limit,
-                            "curvature_violations": curvature_violations,
-                            "curvature_limit_ignored": curvature_limit_ignored,
-                        }
-                        shellpower_runs.append(variant_result)
-
-                        msg = f"✓ Shellpower ({variant['label']}): {cells} cells"
-                        if total_area_m2 is not None:
-                            msg += f" ({total_area_m2:.2f} m²)"
-                        msg += f", peak {peak_power:.1f} W"
-                        if energy is not None:
-                            msg += f", {energy:.0f} Wh/day"
-                        if shaded_pct is not None:
-                            msg += f", {shaded_pct:.0f}% shaded"
-                        if sun_alt is not None:
-                            msg += f" (sun at peak: {sun_alt:.0f}°)"
-                        if max_curvature is not None:
-                            msg += f", max curvature {max_curvature:.1f}°"
-                            if curvature_limit and curvature_limit > 0:
-                                msg += f" (limit {curvature_limit:.1f}°)"
-                        if curvature_violations:
-                            msg += f", {curvature_violations} over limit"
-                        callback(msg)
-
-                    if shellpower_runs:
-                        primary = shellpower_runs[0]
-                        shellpower_data = {
-                            "cells_placed": primary["cells_placed"],
-                            "total_area_m2": primary["total_area_m2"],
-                            "instant_power_w": primary["instant_power_w"],
-                            "daily_energy_wh": primary["daily_energy_wh"],
-                            "shaded_pct": primary["shaded_pct"],
-                            "sun_altitude": primary["sun_altitude"],
-                            "array_map_b64": primary["array_map_b64"],
-                            "max_curvature_deg": primary.get("max_curvature_deg"),
-                            "curvature_limit_deg": primary.get("curvature_limit_deg"),
-                            "curvature_violations": primary.get("curvature_violations"),
-                            "curvature_limit_ignored": primary.get("curvature_limit_ignored"),
-                            "variants": shellpower_runs,
-                        }
                 else:
                     callback("Shellpower: mesh export failed, skipping CLI run")
         elif config.shellpower_enabled:

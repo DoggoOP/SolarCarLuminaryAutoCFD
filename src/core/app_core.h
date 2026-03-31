@@ -212,6 +212,7 @@ typedef struct {
     bool           sim_run;          /* Has static simulation been run? */
     bool           time_sim_run;
     TimeSimResults time_sim_results;
+    bool           ignore_shading;
 
     /* Status */
     char status_msg[256];

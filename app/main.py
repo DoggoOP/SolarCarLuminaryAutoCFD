@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import Settings, get_settings
 from .job_store import JobStore
-from .luminary_pipeline import CaseConfig, LuminaryCFDPipeline
+from .luminary_pipeline import AutoArrayConfig, CaseConfig, LuminaryCFDPipeline
 
 app = FastAPI(title="Luminary AutoCFD Pipeline")
 templates = Jinja2Templates(directory="app/templates")
@@ -70,6 +70,25 @@ async def home(request: Request) -> HTMLResponse:
             "request": request,
             "jobs": jobs,
             "default_speed": settings.default_farfield_speed,
+            "default_project": settings.luminary_project_name,
+            "sheets_url": sheets_url,
+        },
+    )
+
+
+@app.get("/autoarray", response_class=HTMLResponse)
+async def autoarray_home(request: Request) -> HTMLResponse:
+    jobs = [job for job in job_store.list_jobs() if str(job.get("title", "")).startswith("AutoArray run for ")]
+
+    sheets_url = None
+    if settings.google_sheets_spreadsheet_id:
+        sheets_url = f"https://docs.google.com/spreadsheets/d/{settings.google_sheets_spreadsheet_id}/edit"
+
+    return templates.TemplateResponse(
+        "autoarray.html",
+        {
+            "request": request,
+            "jobs": jobs,
             "default_project": settings.luminary_project_name,
             "sheets_url": sheets_url,
         },
@@ -205,6 +224,89 @@ async def run_case(
                 _log(f"ERROR: {exc}")
                 job_store.set_status(job_id, "failed", error=str(exc))
         except Exception as exc:  # pragma: no cover - network/SDK failures
+            _log(f"ERROR: {exc}")
+            job_store.set_status(job_id, "failed", error=str(exc))
+        else:
+            job_store.set_status(job_id, "completed", result=result)
+        finally:
+            upload_path.unlink(missing_ok=True)
+
+    executor.submit(_run_pipeline)
+    return JSONResponse({"job_id": job_id})
+
+
+@app.post("/autoarray/run")
+async def run_autoarray(
+    request: Request,
+    cad_file: UploadFile = File(...),
+    cad_label: str = Form(...),
+    project_name: str = Form(settings.luminary_project_name),
+    body_surfaces: str = Form(""),
+    mesh_min_size: float = Form(0.002),
+    mesh_max_size: float = Form(0.05),
+    shellpower_target_area: str = Form(""),
+    shellpower_lat: float = Form(-23.7),
+    shellpower_lon: float = Form(133.9),
+    shellpower_dual_shadow: bool = Form(False),
+    shellpower_ignore_curvature_limit: bool = Form(False),
+) -> JSONResponse:
+    global _last_submission_time  # noqa: PLW0603
+    now = time.monotonic()
+    with _submission_lock:
+        if now - _last_submission_time < 10.0:
+            raise HTTPException(
+                status_code=429,
+                detail="Please wait a few seconds before starting another job.",
+            )
+        _last_submission_time = now
+
+    if not cad_file.filename:
+        raise HTTPException(status_code=400, detail="CAD filename missing.")
+
+    body_surface_list = _parse_surfaces(body_surfaces)
+    shellpower_area_override = _parse_optional_float(shellpower_target_area)
+
+    file_suffix = Path(cad_file.filename).suffix or ".cad"
+    upload_path = settings.uploads_dir / f"{uuid4().hex}{file_suffix}"
+    with upload_path.open("wb") as buffer:
+        buffer.write(await cad_file.read())
+
+    job_id = job_store.create(f"AutoArray run for {cad_label}")
+    job_store.append(job_id, f"Uploaded geometry to {upload_path}.")
+
+    autoarray_config = AutoArrayConfig(
+        cad_path=upload_path,
+        cad_label=cad_label,
+        project_name=project_name,
+        body_surfaces=body_surface_list or None,
+        mesh_min_size=mesh_min_size,
+        mesh_max_size=mesh_max_size,
+        shellpower_target_area=shellpower_area_override,
+        shellpower_lat=shellpower_lat,
+        shellpower_lon=shellpower_lon,
+        shellpower_dual_shadow=shellpower_dual_shadow,
+        shellpower_ignore_curvature_limit=shellpower_ignore_curvature_limit,
+    )
+
+    def _log(message: str) -> None:
+        job_store.append(job_id, message)
+
+    def _check_cancelled() -> bool:
+        return job_store.is_cancelled(job_id)
+
+    def _run_pipeline() -> None:
+        try:
+            job_store.set_status(job_id, "running")
+            job_pipeline = LuminaryCFDPipeline(settings)
+            result = job_pipeline.run_auto_array(autoarray_config, _log, check_cancelled=_check_cancelled)
+        except RuntimeError as exc:
+            if "cancelled by user" in str(exc).lower():
+                _log("Job cancelled by user")
+                job_store.set_status(job_id, "cancelled")
+            else:
+                _log(f"ERROR: {exc}")
+                job_store.set_status(job_id, "failed", error=str(exc))
+        except Exception as exc:  # pragma: no cover
             _log(f"ERROR: {exc}")
             job_store.set_status(job_id, "failed", error=str(exc))
         else:

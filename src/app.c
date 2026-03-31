@@ -202,6 +202,7 @@ void AppInit(AppState *app) {
     app->sim_settings.hour = 12.0f;
     app->sim_settings.irradiance = 1000.0f;
     app->sim_run = false;
+    app->ignore_shading = false;
 
     // UI
     app->hovered_cell_id = -1;
@@ -1644,6 +1645,8 @@ Vector3 CalculateSunDirection(SimSettings *s, float *out_alt, float *out_az) {
     return Vector3Normalize(dir);
 }
 bool CheckCellShading(AppState *app, SolarCell *cell, Vector3 sun_dir) {
+    if (app->ignore_shading)
+        return false;
     if (!app->mesh_loaded)
         return false;
 
@@ -1718,7 +1721,11 @@ void RunStaticSimulation(AppState *app) {
             cell->current_output = 0;
             cell->voltage_output = 0;
         } else {
-            cell->is_shaded = CheckCellShading(app, cell, app->sim_results.sun_direction);
+            if (app->ignore_shading) {
+                cell->is_shaded = false;
+            } else {
+                cell->is_shaded = CheckCellShading(app, cell, app->sim_results.sun_direction);
+            }
 
             Vector3 worldNormal = CellGetWorldNormal(app, cell);
             float cosAngle = Vector3DotProduct(worldNormal, app->sim_results.sun_direction);
