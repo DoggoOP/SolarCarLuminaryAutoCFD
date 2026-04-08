@@ -528,21 +528,21 @@ class LuminaryCFDPipeline:
 
             run_variants = [
                 {
-                    "key": "shadow",
-                    "label": "Shadow-aware",
-                    "mode": "shadow",
-                    "extra": [],
-                    "occlusion": True,
+                    "key": "no_shadow",
+                    "label": "Symmetric (no shadow)",
+                    "mode": "no_shadow",
+                    "extra": ["--no-occlusion-opt", "--ignore-shading"],
+                    "occlusion": False,
                 }
             ]
             if dual_shadow:
                 run_variants.append(
                     {
-                        "key": "no_shadow",
-                        "label": "Symmetric (no shadow)",
-                        "mode": "no_shadow",
-                        "extra": ["--no-occlusion-opt", "--ignore-shading"],
-                        "occlusion": False,
+                        "key": "shadow",
+                        "label": "Shadow-aware comparison",
+                        "mode": "shadow",
+                        "extra": [],
+                        "occlusion": True,
                     }
                 )
 

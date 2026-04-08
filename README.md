@@ -285,7 +285,7 @@ curl -F cad_file=@solar_car.step \
 | Shellpower not running | Ensure `SHELLPOWER_CLI_PATH` points to the built binary and is executable. |
 | Shellpower CLI timed out | Large meshes can take >60 s; the timeout is 600 s. Check that `--target-area` is reasonable. |
 | Cell count seems off | The area limit uses actual cell size (0.125 m for Gen 7), not grid spacing (0.126 m). `384 × 0.125² = 6.00 m²`. |
-| Array still asymmetric | Some asymmetry is real — occlusion scoring detects genuine shadow from the cockpit. Use `--no-occlusion-opt` to compare with a shadow-unaware layout. |
+| Array still asymmetric | AutoArray now always outputs the symmetric (shadow-agnostic) layout. Enable “Add shadow-aware comparison run” to see the occlusion-optimized variant alongside it. |
 | Sheets logging reports "not configured" | Ensure both `GOOGLE_SHEETS_CREDENTIALS` and `GOOGLE_SHEETS_SPREADSHEET_ID` are set and the service account has Editor access. |
 | Meshing fails | Check CAD integrity (watertight, correct scale). Adjust `mesh_min_size`/`mesh_max_size` or simplify the geometry. |
 | Deployment port errors | Use the provided Dockerfile so the server listens on `$PORT`. |
