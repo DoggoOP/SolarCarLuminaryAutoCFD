@@ -130,6 +130,26 @@
         <input id="project_name" name="project_name" value="{{ default_project }}" placeholder="AutoCFD Solar Car 2" />
       </div>
       <div>
+        <label for="transition_model">Transition model</label>
+        <select id="transition_model" name="transition_model">
+          {% for option in transition_model_options %}
+          <option value="{{ option.value }}" {% if option.value == default_transition_model %}selected{% endif %}>
+            {{ option.label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="turbulence_model">Turbulence model</label>
+        <select id="turbulence_model" name="turbulence_model">
+          {% for option in turbulence_model_options %}
+          <option value="{{ option.value }}" {% if option.value == default_turbulence_model %}selected{% endif %}>
+            {{ option.label }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
         <label for="farfield_speed">Wind speed (m/s)</label>
         <input id="farfield_speed" name="farfield_speed" type="number" step="0.01" value="{{ default_speed }}" />
       </div>
@@ -137,6 +157,19 @@
         <label for="wind_direction">Wind direction (x,y,z)</label>
         <input id="wind_direction" name="wind_direction" value="-1,0,0" />
         <small><a href="https://www.desmos.com/calculator/ceatckfi4d" target="_blank" style="color:#4338ca;">Crosswind Calculator</a></small>
+      </div>
+      <div>
+        <label for="crosswind_preset">Crosswind preset</label>
+        <select id="crosswind_preset">
+          <option value="">Manual wind settings</option>
+          <option value="-27.36,1.15,0|27.38">(-27.36, 1.15, 0) at 27.38 m/s</option>
+          <option value="-26.71,2.12,0|26.79">(-26.71, 2.12, 0) at 26.79 m/s</option>
+          <option value="-25.74,2.77,0|25.89">(-25.74, 2.77, 0) at 25.89 m/s</option>
+          <option value="-24.59,3,0|24.77">(-24.59, 3, 0) at 24.77 m/s</option>
+          <option value="-23.44,2.77,0|23.6">(-23.44, 2.77, 0) at 23.60 m/s</option>
+          <option value="-22.47,2.12,0|22.57">(-22.47, 2.12, 0) at 22.57 m/s</option>
+        </select>
+        <small>Fills wind speed and wind direction.</small>
       </div>
       <div>
         <label for="farfield_multiplier">Farfield size multiplier</label>
@@ -262,6 +295,13 @@
           <p style="font-size:0.85rem;color:#64748b;">
             Simulation ID: {{ job.result.simulation_id }}
           </p>
+          {% if job.result.transition_model or job.result.turbulence_model %}
+          <p style="font-size:0.85rem;color:#64748b;">
+            CFD models:
+            turbulence {{ job.result.turbulence_model or "N/A" }},
+            transition {{ job.result.transition_model or "N/A" }}
+          </p>
+          {% endif %}
           {% endif %}
           {% if job.error %}
           <p style="color: #b91c1c;">{{ job.error }}</p>
@@ -371,6 +411,9 @@
                      <p style="font-size:0.85rem;color:#64748b;">
                        Simulation ID: ${job.result.simulation_id}
                      </p>
+                     ${(job.result.transition_model || job.result.turbulence_model) ? `<p style="font-size:0.85rem;color:#64748b;">
+                       CFD models: turbulence ${job.result.turbulence_model || 'N/A'}, transition ${job.result.transition_model || 'N/A'}
+                     </p>` : ''}
                      ${sheetsUrl ? `<p>
                        <a href="${sheetsUrl}"
                           target="_blank"
@@ -458,6 +501,26 @@
       }
 
       setInterval(refreshJobs, 10000);
+
+      const crosswindPreset = document.getElementById("crosswind_preset");
+      const windDirectionInput = document.getElementById("wind_direction");
+      const windSpeedInput = document.getElementById("farfield_speed");
+
+      crosswindPreset.addEventListener("change", (event) => {
+        const preset = event.target.value;
+        if (!preset) {
+          return;
+        }
+        const [direction, speed] = preset.split("|");
+        windDirectionInput.value = direction;
+        windSpeedInput.value = speed;
+      });
+
+      [windDirectionInput, windSpeedInput].forEach((input) => {
+        input.addEventListener("input", () => {
+          crosswindPreset.value = "";
+        });
+      });
 
       // Toggle wheel surfaces input visibility based on rotating wheels checkbox
       document.getElementById("rotating_wheels").addEventListener("change", (event) => {

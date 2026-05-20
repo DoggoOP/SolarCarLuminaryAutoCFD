@@ -4,7 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
-from typing import List, Optional, Tuple
+from typing import Collection, List, Optional, Tuple
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -13,7 +13,15 @@ from fastapi.templating import Jinja2Templates
 
 from .config import Settings, get_settings
 from .job_store import JobStore
-from .luminary_pipeline import AutoArrayConfig, CaseConfig, LuminaryCFDPipeline
+from .luminary_pipeline import (
+    AutoArrayConfig,
+    CaseConfig,
+    DEFAULT_TRANSITION_MODEL,
+    DEFAULT_TURBULENCE_MODEL,
+    TRANSITION_MODEL_CHOICES,
+    TURBULENCE_MODEL_CHOICES,
+    LuminaryCFDPipeline,
+)
 
 app = FastAPI(title="Luminary AutoCFD Pipeline")
 templates = Jinja2Templates(directory="app/templates")
@@ -22,6 +30,17 @@ job_store = JobStore()
 executor = ThreadPoolExecutor(max_workers=5)
 _submission_lock = Lock()
 _last_submission_time = 0.0
+
+TRANSITION_MODEL_OPTIONS = [
+    {"value": "GAMMA_RE_THETA_2009", "label": "Gamma-ReTheta 2009"},
+    {"value": "NO_TRANSITION", "label": "No transition"},
+    {"value": "GAMMA_2015", "label": "Gamma 2015"},
+    {"value": "AFT_2019", "label": "AFT 2019"},
+]
+TURBULENCE_MODEL_OPTIONS = [
+    {"value": "KOMEGA_SST", "label": "k-omega SST"},
+    {"value": "SPALART_ALLMARAS", "label": "Spalart-Allmaras"},
+]
 
 
 def _parse_vector(raw: str, field_name: str) -> Tuple[float, float, float]:
@@ -55,6 +74,17 @@ def _parse_optional_float(raw: str) -> Optional[float]:
         raise HTTPException(status_code=400, detail="Invalid numeric value.") from exc
 
 
+def _parse_choice(raw: str, allowed: Collection[str], field_name: str) -> str:
+    value = raw.strip().upper()
+    if value not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}. Expected one of: {allowed_text}.",
+        )
+    return value
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request) -> HTMLResponse:
     jobs = job_store.list_jobs()
@@ -71,6 +101,10 @@ async def home(request: Request) -> HTMLResponse:
             "jobs": jobs,
             "default_speed": settings.default_farfield_speed,
             "default_project": settings.luminary_project_name,
+            "default_transition_model": DEFAULT_TRANSITION_MODEL,
+            "default_turbulence_model": DEFAULT_TURBULENCE_MODEL,
+            "transition_model_options": TRANSITION_MODEL_OPTIONS,
+            "turbulence_model_options": TURBULENCE_MODEL_OPTIONS,
             "sheets_url": sheets_url,
         },
     )
@@ -130,6 +164,8 @@ async def run_case(
     farfield_padding: str = Form(""),
     farfield_center: str = Form(""),
     wind_direction: str = Form("1,0,0"),
+    transition_model: str = Form(DEFAULT_TRANSITION_MODEL),
+    turbulence_model: str = Form(DEFAULT_TURBULENCE_MODEL),
     mesh_min_size: float = Form(0.002),
     mesh_max_size: float = Form(0.05),
     frontal_area: str = Form(""),
@@ -159,6 +195,16 @@ async def run_case(
 
     farfield_center_vec = _parse_optional_vector(farfield_center, "farfield center")
     wind_direction_vec = _parse_vector(wind_direction, "wind direction")
+    transition_model_value = _parse_choice(
+        transition_model,
+        TRANSITION_MODEL_CHOICES,
+        "transition model",
+    )
+    turbulence_model_value = _parse_choice(
+        turbulence_model,
+        TURBULENCE_MODEL_CHOICES,
+        "turbulence model",
+    )
     body_surface_list = _parse_surfaces(body_surfaces)
     floor_surface_list = _parse_surfaces(floor_surfaces)
     farfield_surface_list = _parse_surfaces(farfield_surfaces)
@@ -186,6 +232,8 @@ async def run_case(
         ground_speed=ground_speed,
         mesh_min_size=mesh_min_size,
         mesh_max_size=mesh_max_size,
+        transition_model=transition_model_value,
+        turbulence_model=turbulence_model_value,
         farfield_multiplier=farfield_multiplier,
         farfield_padding=farfield_padding_value,
         farfield_center_override=farfield_center_vec,

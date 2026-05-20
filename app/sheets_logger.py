@@ -49,6 +49,8 @@ class SheetsLogger:
         "Wind Direction X",
         "Wind Direction Y",
         "Wind Direction Z",
+        "Transition Model",
+        "Turbulence Model",
         "Frontal Area (m²)",
         "Wetted Area (m²)",
         # Drag results grouped together
@@ -201,6 +203,7 @@ class SheetsLogger:
         wind_direction: tuple,
         frontal_area: float,
         convergence_info: Dict[str, Any],
+        model_settings: Optional[Dict[str, str]] = None,
         shellpower_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
@@ -224,6 +227,8 @@ class SheetsLogger:
             Reference frontal area in m²
         convergence_info : dict
             Information about simulation convergence
+        model_settings : dict, optional
+            CFD transition/turbulence model settings used for the run
         """
         self._connect()
 
@@ -265,6 +270,8 @@ class SheetsLogger:
             wind_direction[0],  # Wind Direction X
             wind_direction[1],  # Wind Direction Y
             wind_direction[2],  # Wind Direction Z
+            (model_settings or {}).get("transition_model", "N/A"),
+            (model_settings or {}).get("turbulence_model", "N/A"),
             frontal_area,
             force_results.get("wetted_area", "N/A"),
             # Drag results grouped together

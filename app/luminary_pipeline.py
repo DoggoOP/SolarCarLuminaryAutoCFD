@@ -18,7 +18,6 @@ from luminarycloud.enum import QuantityType, ResidualType, CalculationType
 from luminarycloud.meshing import MeshGenerationParams, BoundaryLayerParams
 from luminarycloud.outputs import ForceOutputDefinition, ResidualOutputDefinition
 from luminarycloud.params.geometry import shapes as geom_shapes
-from luminarycloud.params.enum import TransitionModel
 from luminarycloud.pipelines import api as pipelines_api
 from luminarycloud.types import Vector3
 
@@ -27,6 +26,29 @@ from .sheets_logger import SheetsLogger
 
 StatusCallback = Callable[[str], None]
 CancellationCheck = Callable[[], bool]
+
+DEFAULT_TRANSITION_MODEL = "GAMMA_RE_THETA_2009"
+DEFAULT_TURBULENCE_MODEL = "KOMEGA_SST"
+TRANSITION_MODEL_CHOICES = {
+    "NO_TRANSITION",
+    "GAMMA_2015",
+    "GAMMA_RE_THETA_2009",
+    "AFT_2019",
+}
+TURBULENCE_MODEL_CHOICES = {
+    "KOMEGA_SST",
+    "SPALART_ALLMARAS",
+}
+
+
+def _normalize_choice(value: str, allowed: set[str], field_name: str) -> str:
+    normalized = (value or "").strip().upper()
+    if normalized not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        raise ValueError(f"Invalid {field_name}: {value!r}. Expected one of: {allowed_text}.")
+    return normalized
+
+
 def _set_vector(target: dict, vector: Tuple[float, float, float]) -> None:
     for axis, value in zip(("x", "y", "z"), vector):
         if value == 0:
@@ -47,6 +69,8 @@ class CaseConfig:
     farfield_speed: float
     mesh_min_size: float
     mesh_max_size: float
+    transition_model: str = DEFAULT_TRANSITION_MODEL
+    turbulence_model: str = DEFAULT_TURBULENCE_MODEL
     farfield_multiplier: float = 20.0
     farfield_padding: float = 0.0
     farfield_center_override: Optional[Tuple[float, float, float]] = None
@@ -110,6 +134,8 @@ class SimulationTemplateBuilder:
         farfield_speed: float,
         sound_speed: float,
         frontal_area: float,
+        transition_model: str = DEFAULT_TRANSITION_MODEL,
+        turbulence_model: str = DEFAULT_TURBULENCE_MODEL,
         ground_speed: float = 24.59,
         rotating_wheels: bool = False,
         front_wheel_surfaces: Optional[Sequence[str]] = None,
@@ -204,13 +230,11 @@ class SimulationTemplateBuilder:
         # Don't normalize physics - let Luminary use the template's original physics ID
         # self._normalize_physics_metadata(payload)
 
-        # Ensure transition model is set correctly
-        physics_list = payload.get("physics") or []
-        if physics_list and len(physics_list) > 0:
-            fluid = physics_list[0]
-            turbulence = fluid.get("fluid", {}).get("turbulence", {})
-            if turbulence:
-                turbulence["transitionModel"] = TransitionModel.GAMMA_RE_THETA_2009.value
+        self._configure_physics_models(
+            payload,
+            transition_model=transition_model,
+            turbulence_model=turbulence_model,
+        )
 
         # Configure adaptive mesh refinement
         # On Railway (production), enable Lumi Mesh Adaptation with target of 10M CVs
@@ -229,6 +253,45 @@ class SimulationTemplateBuilder:
             amr["meshingMethod"] = "MESH_METHOD_MINIMAL"
 
         return payload
+
+    @staticmethod
+    def _configure_physics_models(
+        payload: dict,
+        *,
+        transition_model: str,
+        turbulence_model: str,
+    ) -> None:
+        transition_model = _normalize_choice(
+            transition_model,
+            TRANSITION_MODEL_CHOICES,
+            "transition model",
+        )
+        turbulence_model = _normalize_choice(
+            turbulence_model,
+            TURBULENCE_MODEL_CHOICES,
+            "turbulence model",
+        )
+
+        physics_list = payload.get("physics") or []
+        if not physics_list:
+            return
+
+        fluid_physics = physics_list[0].setdefault("fluid", {})
+        basic = fluid_physics.setdefault("basicFluid", {})
+        turbulence = fluid_physics.setdefault("turbulence", {})
+
+        basic["viscousModel"] = "RANS"
+        turbulence["turbulenceModel"] = turbulence_model
+        turbulence["transitionModel"] = transition_model
+
+        if turbulence_model == "KOMEGA_SST":
+            turbulence.setdefault("qcrSst", "SST_QCR2000")
+            turbulence.pop("qcrSa", None)
+            turbulence.pop("rotationCorrectionSa", None)
+        elif turbulence_model == "SPALART_ALLMARAS":
+            turbulence.setdefault("qcrSa", "QCR_OFF")
+            turbulence.setdefault("rotationCorrectionSa", "ROTATION_CORRECTION_OFF")
+            turbulence.pop("qcrSst", None)
 
     def dump_payload(self, payload: dict, *, label: Optional[str] = None) -> Path:
         """Persist the payload to dumps/ for debugging."""
@@ -1169,6 +1232,10 @@ class LuminaryCFDPipeline:
             "Using body surfaces: "
             f"{body_surfaces}; floor surfaces: {floor_surfaces}; farfield surfaces: {farfield_surfaces}."
         )
+        callback(
+            "CFD models: "
+            f"turbulence={config.turbulence_model}, transition={config.transition_model}."
+        )
 
         farfield_vector = self._direction_vector(
             config.farfield_direction, config.farfield_speed
@@ -1186,6 +1253,8 @@ class LuminaryCFDPipeline:
             farfield_speed=config.farfield_speed,
             sound_speed=self._settings.sound_speed,
             frontal_area=frontal_area,
+            transition_model=config.transition_model,
+            turbulence_model=config.turbulence_model,
             ground_speed=config.ground_speed,
             rotating_wheels=config.rotating_wheels,
             front_wheel_surfaces=front_wheel_surfaces,
@@ -1214,7 +1283,11 @@ class LuminaryCFDPipeline:
                 fluid_physics = physics_list[0]
                 if hasattr(fluid_physics, 'fluid') and hasattr(fluid_physics.fluid, 'turbulence'):
                     transition_model = getattr(fluid_physics.fluid.turbulence, 'transition_model', 'UNKNOWN')
-                    callback(f"DEBUG: Template transition model: {transition_model}")
+                    turbulence_model = getattr(fluid_physics.fluid.turbulence, 'turbulence_model', 'UNKNOWN')
+                    callback(
+                        "DEBUG: Template CFD models: "
+                        f"turbulence={turbulence_model}, transition={transition_model}"
+                    )
         except Exception as exc:
             callback(f"DEBUG: Could not verify transition model: {exc}")
 
@@ -1395,6 +1468,10 @@ class LuminaryCFDPipeline:
                     wind_direction=config.farfield_direction,
                     frontal_area=frontal_area,
                     convergence_info=convergence_info,
+                    model_settings={
+                        "transition_model": config.transition_model,
+                        "turbulence_model": config.turbulence_model,
+                    },
                     shellpower_data=shellpower_data,
                 )
                 callback("✓ Results logged to Google Sheets")
@@ -1409,6 +1486,8 @@ class LuminaryCFDPipeline:
             "simulation_id": simulation.id,
             "template_id": template.id,
             "status": status.name,
+            "transition_model": config.transition_model,
+            "turbulence_model": config.turbulence_model,
             "force_results": force_results,
             "shellpower_data": shellpower_data,
         }

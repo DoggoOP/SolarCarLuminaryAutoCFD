@@ -153,6 +153,12 @@ AutoCFD reads settings from environment variables (via `app/config.py`).
 | `GOOGLE_SHEETS_CREDENTIALS` | No | — | Path or JSON string for gspread. |
 | `GOOGLE_SHEETS_SPREADSHEET_ID` | No | — | Sheet to append results to. |
 
+The dashboard also exposes Luminary CFD model controls for each run:
+
+- Transition model: `GAMMA_RE_THETA_2009` (default), `NO_TRANSITION`, `GAMMA_2015`, or `AFT_2019`.
+- Turbulence model: `KOMEGA_SST` (default) or `SPALART_ALLMARAS`.
+- Crosswind presets: pick one of the saved vectors to fill both wind speed and wind direction.
+
 ---
 
 ## Shellpower Solar Integration
@@ -269,6 +275,9 @@ curl -F cad_file=@solar_car.step \
      -F cad_label="Array15" \
      -F project_name="AutoCFD Solar Car" \
      -F farfield_speed=24.59 \
+     -F wind_direction="-1,0,0" \
+     -F transition_model=GAMMA_RE_THETA_2009 \
+     -F turbulence_model=KOMEGA_SST \
      -F mesh_min_size=0.002 \
      -F mesh_max_size=0.05 \
      -F rotating_wheels=true \
